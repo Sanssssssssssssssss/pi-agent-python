@@ -189,7 +189,7 @@ try {
     }
     if ($null -ne $ParentProcess) {
         try {
-            Wait-Process -InputObject $ParentProcess -ErrorAction Stop
+            $ParentProcess.WaitForExit()
         } catch {
             $Detail = $_.Exception.Message
             throw "Could not wait for Pi process $ParentProcessId to exit. Update aborted: $Detail"

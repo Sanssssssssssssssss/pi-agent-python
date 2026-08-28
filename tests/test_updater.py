@@ -101,11 +101,9 @@ def test_update_pi_agent_hands_windows_uv_tool_update_to_waiting_process(tmp_pat
     }
     assert options["creationflags"] == 0x08000200
     script = (handoff_dir / "update.ps1").read_text(encoding="utf-8")
-    assert "Wait-Process -InputObject $ParentProcess -ErrorAction Stop" in script
+    assert "$ParentProcess.WaitForExit()" in script
     assert "NoProcessFoundForGivenId" in script
-    assert script.index("Wait-Process -InputObject $ParentProcess") < script.index(
-        "$UpdateProcess.Start()"
-    )
+    assert script.index("$ParentProcess.WaitForExit()") < script.index("$UpdateProcess.Start()")
     assert "System.Diagnostics.ProcessStartInfo" in script
     assert "$StartInfo.UseShellExecute = $false" in script
 
@@ -287,7 +285,11 @@ def test_windows_helper_wait_failure_is_fail_closed(tmp_path: Path, powershell: 
     )
     wrapper = update_dir / "force-wait-failure.ps1"
     wrapper.write_text(
-        "function Wait-Process { throw 'forced wait failure' }\n"
+        "function Get-Process {\n"
+        "    $Fake = [pscustomobject]@{}\n"
+        "    $Fake | Add-Member ScriptMethod WaitForExit { throw 'forced wait failure' }\n"
+        "    return $Fake\n"
+        "}\n"
         "$Target = $args[0]\n"
         "$TargetArgs = $args[1..($args.Count - 1)]\n"
         "& $Target @TargetArgs\n"
