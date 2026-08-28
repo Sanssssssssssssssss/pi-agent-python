@@ -1,16 +1,16 @@
-"""Tau extension that blocks dangerous bash commands before they run.
+"""Pi extension that blocks dangerous bash commands before they run.
 
 Demonstrates the `tool_call` hook: return a blocking result and the tool
 never executes; the model sees the block reason instead.
 
-Install by copying into `~/.tau/extensions/`, or run:
+Install by copying into `~/.pi-agent/extensions/`, or run:
 
-    tau -e examples/extensions/permission_gate.py
+    pi-agent -e examples/extensions/permission_gate.py
 """
 
 import re
 
-from tau_coding.extensions import ExtensionAPI, ToolCallHookEvent, ToolCallHookResult
+from pi_coding.extensions import ExtensionAPI, ToolCallHookEvent, ToolCallHookResult
 
 DANGEROUS_PATTERNS = (
     # rm with a flag cluster containing both r and f, in either order
@@ -40,6 +40,6 @@ def _gate_tool_call(event: ToolCallHookEvent, context) -> ToolCallHookResult | N
     return None
 
 
-def setup(tau: ExtensionAPI) -> None:
+def setup(pi: ExtensionAPI) -> None:
     """Subscribe the bash guard."""
-    tau.on("tool_call", _gate_tool_call)
+    pi.on("tool_call", _gate_tool_call)

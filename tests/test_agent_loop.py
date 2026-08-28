@@ -4,16 +4,8 @@ from itertools import chain, repeat
 
 import pytest
 
-import tau_agent.loop as loop_module
-from pi_event_helpers import (
-    assistant_done,
-    assistant_error,
-    assistant_start,
-    text_delta,
-    thinking_delta,
-    tool_call_end,
-)
-from tau_agent import (
+import pi_agent.loop as loop_module
+from pi_agent import (
     AgentEvent,
     AgentMessage,
     AgentTool,
@@ -29,10 +21,18 @@ from tau_agent import (
     ToolResultMessage,
     UserMessage,
 )
-from tau_agent.loop import run_agent_loop
-from tau_agent.provider_events import ThinkingDeltaEvent
-from tau_agent.types import JSONValue
-from tau_ai import CancellationToken, FakeProvider
+from pi_agent.loop import run_agent_loop
+from pi_agent.provider_events import ThinkingDeltaEvent
+from pi_agent.types import JSONValue
+from pi_ai import CancellationToken, FakeProvider
+from pi_event_helpers import (
+    assistant_done,
+    assistant_error,
+    assistant_start,
+    text_delta,
+    thinking_delta,
+    tool_call_end,
+)
 
 
 async def _collect(stream: AsyncIterator[AgentEvent]) -> list[AgentEvent]:
@@ -64,7 +64,7 @@ async def test_agent_loop_streams_canonical_nested_events() -> None:
         run_agent_loop(
             provider=provider,
             model="fake",
-            system="You are Tau.",
+            system="You are Pi.",
             messages=messages,
             tools=[],
         )
@@ -110,7 +110,7 @@ async def test_agent_loop_records_only_monotonic_provider_wait_time(
         run_agent_loop(
             provider=provider,
             model="fake",
-            system="You are Tau.",
+            system="You are Pi.",
             messages=messages,
             tools=[],
         )
@@ -137,7 +137,7 @@ async def test_agent_loop_does_not_invent_ttft_without_an_output_event(
         run_agent_loop(
             provider=provider,
             model="fake",
-            system="You are Tau.",
+            system="You are Pi.",
             messages=[UserMessage(content="Say hello")],
             tools=[],
         )
@@ -168,7 +168,7 @@ async def test_agent_loop_nests_thinking_events_without_losing_final_message() -
         run_agent_loop(
             provider=provider,
             model="fake",
-            system="You are Tau.",
+            system="You are Pi.",
             messages=messages,
             tools=[],
         )
@@ -215,7 +215,7 @@ async def test_agent_loop_executes_tool_and_emits_tool_result_message_lifecycle(
         run_agent_loop(
             provider=provider,
             model="fake",
-            system="You are Tau.",
+            system="You are Pi.",
             messages=messages,
             tools=[_tool("read", execute)],
         )
@@ -268,7 +268,7 @@ async def test_agent_loop_passes_call_id_signal_and_progress_to_tool() -> None:
         run_agent_loop(
             provider=provider,
             model="fake",
-            system="You are Tau.",
+            system="You are Pi.",
             messages=[UserMessage(content="work")],
             tools=[_tool("work", execute)],
             signal=signal,
@@ -293,7 +293,7 @@ async def test_agent_loop_records_unknown_tool_as_canonical_error_result() -> No
         run_agent_loop(
             provider=provider,
             model="fake",
-            system="You are Tau.",
+            system="You are Pi.",
             messages=messages,
             tools=[],
             max_turns=1,
@@ -317,7 +317,7 @@ async def test_agent_loop_converts_provider_error_to_assistant_error_message() -
         run_agent_loop(
             provider=provider,
             model="fake",
-            system="You are Tau.",
+            system="You are Pi.",
             messages=messages,
             tools=[],
         )
@@ -352,7 +352,7 @@ async def test_agent_loop_excludes_empty_failed_assistant_from_next_provider_cal
         run_agent_loop(
             provider=provider,
             model="fake",
-            system="You are Tau.",
+            system="You are Pi.",
             messages=messages,
             tools=[],
             prompts=[UserMessage(content="hello")],
@@ -366,7 +366,7 @@ async def test_agent_loop_excludes_empty_failed_assistant_from_next_provider_cal
         run_agent_loop(
             provider=provider,
             model="fake",
-            system="You are Tau.",
+            system="You are Pi.",
             messages=messages,
             tools=[],
             prompts=[UserMessage(content="continue")],
@@ -394,7 +394,7 @@ async def test_agent_loop_repairs_malformed_tool_history_before_provider_call() 
         run_agent_loop(
             provider=provider,
             model="fake",
-            system="You are Tau.",
+            system="You are Pi.",
             messages=messages,
             tools=[],
         )
@@ -445,7 +445,7 @@ async def test_agent_loop_injects_steering_and_follow_up_messages() -> None:
         run_agent_loop(
             provider=provider,
             model="fake",
-            system="You are Tau.",
+            system="You are Pi.",
             messages=messages,
             tools=[_tool("work", execute)],
             get_steering_messages=lambda: pop(steering),
@@ -474,7 +474,7 @@ async def test_agent_loop_stops_with_assistant_error_after_max_turns() -> None:
         run_agent_loop(
             provider=provider,
             model="fake",
-            system="You are Tau.",
+            system="You are Pi.",
             messages=messages,
             tools=[],
             max_turns=1,

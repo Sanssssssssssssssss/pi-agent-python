@@ -11,11 +11,11 @@ from pathlib import Path
 
 import pytest
 
-from tau_agent.loop import AgentContext, BeforeToolCallContext
-from tau_agent.messages import AssistantMessage, TextContent, ToolCall
-from tau_agent.tools import AgentTool, AgentToolResult
-from tau_coding import TauResourcePaths
-from tau_coding.extensions import ExtensionRuntime
+from pi_agent.loop import AgentContext, BeforeToolCallContext
+from pi_agent.messages import AssistantMessage, TextContent, ToolCall
+from pi_agent.tools import AgentTool, AgentToolResult
+from pi_coding import PiResourcePaths
+from pi_coding.extensions import ExtensionRuntime
 
 pytestmark = pytest.mark.anyio
 
@@ -30,8 +30,8 @@ def anyio_backend() -> str:
 def _runtime_with_examples(tmp_path: Path, *names: str) -> ExtensionRuntime:
     runtime = ExtensionRuntime()
     runtime.load(
-        TauResourcePaths(
-            root=tmp_path / "home-tau",
+        PiResourcePaths(
+            root=tmp_path / "home-pi",
             cwd=tmp_path / "project",
             agents_root=tmp_path / "home-agents",
         ),
@@ -96,9 +96,9 @@ async def test_hello_tool_greets(tmp_path: Path) -> None:
     runtime = _runtime_with_examples(tmp_path, "hello_tool.py")
     hello = runtime.compose_tools([])[0]
 
-    result = await hello.execute("test-call", {"who": "Tau"})
+    result = await hello.execute("test-call", {"who": "Pi"})
 
-    assert result.text == "Hello, Tau!"
+    assert result.text == "Hello, Pi!"
 
 
 async def test_hello_tool_defaults_to_world(tmp_path: Path) -> None:

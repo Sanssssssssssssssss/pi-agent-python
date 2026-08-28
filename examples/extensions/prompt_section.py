@@ -1,11 +1,11 @@
-"""Append structured, always-on instructions to Tau's system prompt."""
+"""Append structured, always-on instructions to Pi's system prompt."""
 
-from tau_coding.extensions import ExtensionAPI
+from pi_coding.extensions import ExtensionAPI
 
 
-def setup(tau: ExtensionAPI) -> None:
+def setup(pi: ExtensionAPI) -> None:
     """Add a labeled procedure while this extension generation is active."""
-    tau.add_prompt_section(
+    pi.add_prompt_section(
         "Review procedure",
         """Read the complete diff before editing.
 

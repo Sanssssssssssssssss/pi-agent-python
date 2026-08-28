@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from tau_coding.catalog_loader import (
+from pi_coding.catalog_loader import (
     CatalogError,
     builtin_catalog,
     builtin_catalog_resource_text,
@@ -14,13 +14,13 @@ from tau_coding.catalog_loader import (
     save_user_catalog_entries,
     user_catalog_path,
 )
-from tau_coding.paths import TauPaths
-from tau_coding.provider_catalog import (
+from pi_coding.paths import PiPaths
+from pi_coding.provider_catalog import (
     BUILTIN_PROVIDER_CATALOG,
     builtin_provider_entry,
     model_cost_for_input_tokens,
 )
-from tau_coding.provider_config import load_provider_settings
+from pi_coding.provider_config import load_provider_settings
 
 VALID_PROVIDER = """
 [[providers]]
@@ -43,9 +43,9 @@ thinking_parameter = "reasoning_effort"
 """
 
 
-def _write_user_catalog(tau_home: Path, body: str) -> TauPaths:
-    paths = TauPaths(home=tau_home)
-    tau_home.mkdir(parents=True, exist_ok=True)
+def _write_user_catalog(pi_home: Path, body: str) -> PiPaths:
+    paths = PiPaths(home=pi_home)
+    pi_home.mkdir(parents=True, exist_ok=True)
     user_catalog_path(paths).write_text(f"schema_version = 1\n{body}", encoding="utf-8")
     return paths
 
@@ -517,12 +517,12 @@ def test_builtin_catalog_resource_is_packaged() -> None:
 
 
 def test_effective_catalog_without_user_file_is_builtin(tmp_path: Path) -> None:
-    paths = TauPaths(home=tmp_path / ".tau")
+    paths = PiPaths(home=tmp_path / ".pi-agent")
     assert effective_catalog(paths) == builtin_catalog()
 
 
 def test_user_catalog_adds_new_provider(tmp_path: Path) -> None:
-    paths = _write_user_catalog(tmp_path / ".tau", VALID_PROVIDER)
+    paths = _write_user_catalog(tmp_path / ".pi-agent", VALID_PROVIDER)
     catalog = effective_catalog(paths)
     assert [entry.name for entry in catalog[:-1]] == [e.name for e in builtin_catalog()]
     entry = catalog[-1]
@@ -534,7 +534,7 @@ def test_user_catalog_adds_new_provider(tmp_path: Path) -> None:
 
 def test_user_catalog_overlays_builtin_provider(tmp_path: Path) -> None:
     paths = _write_user_catalog(
-        tmp_path / ".tau",
+        tmp_path / ".pi-agent",
         """
 [[providers]]
 name = "anthropic"
@@ -559,7 +559,7 @@ default_model = "claude-next-1"
 
 def test_builtin_tombstone_removes_model_from_user_catalog_overlay(tmp_path: Path) -> None:
     paths = _write_user_catalog(
-        tmp_path / ".tau",
+        tmp_path / ".pi-agent",
         """
 [[providers]]
 name = "openai-codex"
@@ -588,7 +588,7 @@ name = "GPT-5.6"
 
 def test_user_catalog_thinking_fields_replace_as_group(tmp_path: Path) -> None:
     paths = _write_user_catalog(
-        tmp_path / ".tau",
+        tmp_path / ".pi-agent",
         """
 [[providers]]
 name = "anthropic"
@@ -605,7 +605,7 @@ thinking_default = "high"
 
 def test_user_catalog_overlays_and_serializes_cost_tiers(tmp_path: Path) -> None:
     paths = _write_user_catalog(
-        tmp_path / ".tau",
+        tmp_path / ".pi-agent",
         """
 [[providers]]
 name = "minimax"
@@ -643,7 +643,7 @@ cost_tiers = [
 
 def test_user_catalog_cost_tier_accepts_one_hour_cache_write_rate(tmp_path: Path) -> None:
     paths = _write_user_catalog(
-        tmp_path / ".tau",
+        tmp_path / ".pi-agent",
         """
 [[providers]]
 name = "minimax"
@@ -675,7 +675,7 @@ cost_tiers = [
 
 def test_user_catalog_rejects_bounded_final_cost_tier(tmp_path: Path) -> None:
     paths = _write_user_catalog(
-        tmp_path / ".tau",
+        tmp_path / ".pi-agent",
         """
 [[providers]]
 name = "minimax"
@@ -691,14 +691,16 @@ cost_tiers = [
 
 
 def test_user_catalog_rejects_unknown_keys(tmp_path: Path) -> None:
-    paths = _write_user_catalog(tmp_path / ".tau", VALID_PROVIDER.replace("docs_url", "docs_ur1"))
+    paths = _write_user_catalog(
+        tmp_path / ".pi-agent", VALID_PROVIDER.replace("docs_url", "docs_ur1")
+    )
     with pytest.raises(CatalogError, match=r"providers\.nebius"):
         effective_catalog(paths)
 
 
 def test_user_catalog_rejects_default_model_not_in_models(tmp_path: Path) -> None:
     paths = _write_user_catalog(
-        tmp_path / ".tau",
+        tmp_path / ".pi-agent",
         VALID_PROVIDER.replace(
             'default_model = "deepseek-ai/DeepSeek-V4-Pro"', 'default_model = "missing"'
         ),
@@ -760,27 +762,27 @@ def test_user_catalog_rejects_empty_and_coerced_values(
     body: str,
     match: str,
 ) -> None:
-    paths = _write_user_catalog(tmp_path / ".tau", body)
+    paths = _write_user_catalog(tmp_path / ".pi-agent", body)
     with pytest.raises(CatalogError, match=match):
         effective_catalog(paths)
 
 
 def test_user_catalog_rejects_bad_kind(tmp_path: Path) -> None:
     paths = _write_user_catalog(
-        tmp_path / ".tau", VALID_PROVIDER.replace("openai-compatible", "grpc")
+        tmp_path / ".pi-agent", VALID_PROVIDER.replace("openai-compatible", "grpc")
     )
     with pytest.raises(CatalogError, match="kind"):
         effective_catalog(paths)
 
 
 def test_user_catalog_rejects_malformed_toml(tmp_path: Path) -> None:
-    paths = _write_user_catalog(tmp_path / ".tau", "[[providers]\nname =")
+    paths = _write_user_catalog(tmp_path / ".pi-agent", "[[providers]\nname =")
     with pytest.raises(CatalogError, match="invalid TOML"):
         effective_catalog(paths)
 
 
 def test_user_catalog_provider_appears_in_settings(tmp_path: Path) -> None:
-    paths = _write_user_catalog(tmp_path / ".tau", VALID_PROVIDER)
+    paths = _write_user_catalog(tmp_path / ".pi-agent", VALID_PROVIDER)
     settings = load_provider_settings(paths)
     provider = settings.get_provider("nebius")
     assert provider.base_url == "https://api.studio.nebius.ai/v1"
@@ -788,8 +790,8 @@ def test_user_catalog_provider_appears_in_settings(tmp_path: Path) -> None:
 
 
 def test_user_catalog_provider_appears_with_existing_settings_file(tmp_path: Path) -> None:
-    paths = _write_user_catalog(tmp_path / ".tau", VALID_PROVIDER)
-    (tmp_path / ".tau" / "providers.json").write_text(
+    paths = _write_user_catalog(tmp_path / ".pi-agent", VALID_PROVIDER)
+    (tmp_path / ".pi-agent" / "providers.json").write_text(
         '{"default_provider": "openai", "providers": [{"type": "openai-compatible", '
         '"name": "openai", "base_url": "https://api.openai.com/v1", '
         '"api_key_env": "OPENAI_API_KEY", "models": ["gpt-5.5"], '

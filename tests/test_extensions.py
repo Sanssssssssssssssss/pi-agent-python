@@ -9,24 +9,23 @@ from typing import cast
 
 import pytest
 
-from pi_event_helpers import assistant_done, assistant_start
-from tau_agent import AssistantMessage, ToolCall, UserMessage
-from tau_agent.loop import AfterToolCallContext, AgentContext, BeforeToolCallContext
-from tau_agent.messages import AgentMessage, CustomMessage, Usage, assistant_content
-from tau_agent.session import CustomEntry, JsonlSessionStorage, LeafEntry, MessageEntry
-from tau_agent.tools import AgentTool, AgentToolResult
-from tau_agent.types import JSONValue
-from tau_ai import FakeProvider
-from tau_coding import (
+from pi_agent import AssistantMessage, ToolCall, UserMessage
+from pi_agent.loop import AfterToolCallContext, AgentContext, BeforeToolCallContext
+from pi_agent.messages import AgentMessage, CustomMessage, Usage, assistant_content
+from pi_agent.session import CustomEntry, JsonlSessionStorage, LeafEntry, MessageEntry
+from pi_agent.tools import AgentTool, AgentToolResult
+from pi_agent.types import JSONValue
+from pi_ai import FakeProvider
+from pi_coding import (
     BuiltInExtension,
     CodingSession,
     CodingSessionConfig,
+    PiPaths,
+    PiResourcePaths,
     ResourceError,
     SessionManager,
-    TauPaths,
-    TauResourcePaths,
 )
-from tau_coding.extensions import (
+from pi_coding.extensions import (
     BeforeAgentStartResult,
     ContextHookResult,
     CustomMessageView,
@@ -48,8 +47,9 @@ from tau_coding.extensions import (
     discover_extensions,
     load_extensions,
 )
-from tau_coding.project_trust import ProjectTrustRequest, TrustChoice
-from tau_coding.system_prompt import PromptSection
+from pi_coding.project_trust import ProjectTrustRequest, TrustChoice
+from pi_coding.system_prompt import PromptSection
+from pi_event_helpers import assistant_done, assistant_start
 
 pytestmark = pytest.mark.anyio
 
@@ -59,9 +59,9 @@ def anyio_backend() -> str:
     return "asyncio"
 
 
-def _paths(tmp_path: Path) -> TauResourcePaths:
-    return TauResourcePaths(
-        root=tmp_path / "home-tau",
+def _paths(tmp_path: Path) -> PiResourcePaths:
+    return PiResourcePaths(
+        root=tmp_path / "home-pi",
         cwd=tmp_path / "project",
         agents_root=tmp_path / "home-agents",
     )
@@ -75,15 +75,15 @@ def _write_extension(directory: Path, name: str, body: str) -> Path:
 
 
 HELLO_TOOL_EXTENSION = """
-from tau_agent.tools import AgentTool, AgentToolResult
+from pi_agent.tools import AgentTool, AgentToolResult
 
 
 async def _run(tool_call_id, arguments, signal=None, on_update=None):
     return AgentToolResult(content=f"hello {arguments.get('who', 'world')}")
 
 
-def setup(tau):
-    tau.register_tool(
+def setup(pi):
+    pi.register_tool(
         AgentTool(
             name="hello",
             label="Hello",
@@ -96,17 +96,17 @@ def setup(tau):
 """
 
 
-def _user_extensions_dir(paths: TauResourcePaths) -> Path:
+def _user_extensions_dir(paths: PiResourcePaths) -> Path:
     return paths.root / "extensions"
 
 
-def _project_extensions_dir(paths: TauResourcePaths) -> Path:
+def _project_extensions_dir(paths: PiResourcePaths) -> Path:
     assert paths.cwd is not None
-    return paths.cwd / ".tau" / "extensions"
+    return paths.cwd / ".pi-agent" / "extensions"
 
 
 def _runtime_with(
-    paths: TauResourcePaths,
+    paths: PiResourcePaths,
     *,
     include_project_dir: bool = False,
 ) -> ExtensionRuntime:
@@ -127,7 +127,7 @@ class RecordingSession:
         self.session_id = "session-1"
         self.session_name: str | None = "Test session"
         self.thinking_level = "medium"
-        self.system_prompt = "You are Tau."
+        self.system_prompt = "You are Pi."
         self.is_running = running
         self.messages: tuple[AgentMessage, ...] = ()
         self.steered: list[str] = []
@@ -169,8 +169,8 @@ class RecordingSession:
 
 def test_discovers_user_extensions_and_skips_project_by_default(tmp_path: Path) -> None:
     paths = _paths(tmp_path)
-    _write_extension(_user_extensions_dir(paths), "user_ext", "def setup(tau):\n    pass\n")
-    _write_extension(_project_extensions_dir(paths), "proj_ext", "def setup(tau):\n    pass\n")
+    _write_extension(_user_extensions_dir(paths), "user_ext", "def setup(pi):\n    pass\n")
+    _write_extension(_project_extensions_dir(paths), "proj_ext", "def setup(pi):\n    pass\n")
 
     discovered, diagnostics = discover_extensions(paths)
 
@@ -180,8 +180,8 @@ def test_discovers_user_extensions_and_skips_project_by_default(tmp_path: Path) 
 
 def test_project_extensions_load_first_when_enabled(tmp_path: Path) -> None:
     paths = _paths(tmp_path)
-    _write_extension(_user_extensions_dir(paths), "ext_a", "def setup(tau):\n    pass\n")
-    _write_extension(_project_extensions_dir(paths), "ext_b", "def setup(tau):\n    pass\n")
+    _write_extension(_user_extensions_dir(paths), "ext_a", "def setup(pi):\n    pass\n")
+    _write_extension(_project_extensions_dir(paths), "ext_b", "def setup(pi):\n    pass\n")
 
     discovered, _ = discover_extensions(paths, include_project_dir=True)
 
@@ -190,8 +190,8 @@ def test_project_extensions_load_first_when_enabled(tmp_path: Path) -> None:
 
 def test_duplicate_extension_names_prefer_first_loaded(tmp_path: Path) -> None:
     paths = _paths(tmp_path)
-    _write_extension(_user_extensions_dir(paths), "dup", "def setup(tau):\n    pass\n")
-    _write_extension(_project_extensions_dir(paths), "dup", "def setup(tau):\n    pass\n")
+    _write_extension(_user_extensions_dir(paths), "dup", "def setup(pi):\n    pass\n")
+    _write_extension(_project_extensions_dir(paths), "dup", "def setup(pi):\n    pass\n")
 
     discovered, diagnostics = discover_extensions(paths, include_project_dir=True)
 
@@ -202,8 +202,8 @@ def test_duplicate_extension_names_prefer_first_loaded(tmp_path: Path) -> None:
 
 def test_explicit_extension_paths_load_even_with_discovery_disabled(tmp_path: Path) -> None:
     paths = _paths(tmp_path)
-    _write_extension(_user_extensions_dir(paths), "skipped", "def setup(tau):\n    pass\n")
-    explicit = _write_extension(tmp_path / "elsewhere", "explicit", "def setup(tau):\n    pass\n")
+    _write_extension(_user_extensions_dir(paths), "skipped", "def setup(pi):\n    pass\n")
+    explicit = _write_extension(tmp_path / "elsewhere", "explicit", "def setup(pi):\n    pass\n")
 
     discovered, _ = discover_extensions(
         paths,
@@ -228,7 +228,7 @@ def test_package_extension_loads_with_relative_import(tmp_path: Path) -> None:
     package_dir.mkdir(parents=True)
     (package_dir / "helper.py").write_text("VALUE = 41\n", encoding="utf-8")
     (package_dir / "extension.py").write_text(
-        "from . import helper\n\n\ndef setup(tau):\n    setup.value = helper.VALUE + 1\n",
+        "from . import helper\n\n\ndef setup(pi):\n    setup.value = helper.VALUE + 1\n",
         encoding="utf-8",
     )
 
@@ -246,7 +246,7 @@ def _write_src_layout_extension(repo: Path, *, entry_name: str = "extension") ->
     (package_dir / "helper.py").write_text("VALUE = 41\n", encoding="utf-8")
     entry = package_dir / f"{entry_name}.py"
     entry.write_text(
-        "from . import helper\n\n\ndef setup(tau):\n    setup.value = helper.VALUE + 1\n",
+        "from . import helper\n\n\ndef setup(pi):\n    setup.value = helper.VALUE + 1\n",
         encoding="utf-8",
     )
     return entry
@@ -257,7 +257,7 @@ def test_manifest_declares_src_layout_entry(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     _write_src_layout_extension(repo)
     (repo / "pyproject.toml").write_text(
-        '[tool.tau]\nextensions = ["src/my_ext/extension.py"]\n', encoding="utf-8"
+        '[tool.pi-agent]\nextensions = ["src/my_ext/extension.py"]\n', encoding="utf-8"
     )
 
     result = load_extensions(paths, extra_paths=(repo,), include_resource_dirs=False)
@@ -272,9 +272,9 @@ def test_manifest_wins_over_root_extension_py(tmp_path: Path) -> None:
     paths = _paths(tmp_path)
     repo = tmp_path / "repo"
     _write_src_layout_extension(repo)
-    (repo / "extension.py").write_text("def setup(tau):\n    pass\n", encoding="utf-8")
+    (repo / "extension.py").write_text("def setup(pi):\n    pass\n", encoding="utf-8")
     (repo / "pyproject.toml").write_text(
-        '[tool.tau]\nextensions = ["src/my_ext/extension.py"]\n', encoding="utf-8"
+        '[tool.pi-agent]\nextensions = ["src/my_ext/extension.py"]\n', encoding="utf-8"
     )
 
     discovered, _ = discover_extensions(paths, extra_paths=(repo,), include_resource_dirs=False)
@@ -288,7 +288,7 @@ def test_manifest_entry_named_after_file_when_not_extension_py(tmp_path: Path) -
     repo = tmp_path / "repo"
     _write_src_layout_extension(repo, entry_name="main")
     (repo / "pyproject.toml").write_text(
-        '[tool.tau]\nextensions = ["src/my_ext/main.py"]\n', encoding="utf-8"
+        '[tool.pi-agent]\nextensions = ["src/my_ext/main.py"]\n', encoding="utf-8"
     )
 
     discovered, _ = discover_extensions(paths, extra_paths=(repo,), include_resource_dirs=False)
@@ -302,7 +302,7 @@ def test_manifest_discovered_in_extensions_dir(tmp_path: Path) -> None:
     repo = _user_extensions_dir(paths) / "my-ext-repo"
     _write_src_layout_extension(repo)
     (repo / "pyproject.toml").write_text(
-        '[tool.tau]\nextensions = ["src/my_ext/extension.py"]\n', encoding="utf-8"
+        '[tool.pi-agent]\nextensions = ["src/my_ext/extension.py"]\n', encoding="utf-8"
     )
 
     discovered, diagnostics = discover_extensions(paths)
@@ -317,9 +317,9 @@ def test_manifest_multiple_entries_load_independently(tmp_path: Path) -> None:
     _write_src_layout_extension(repo)
     other = repo / "src" / "other_ext"
     other.mkdir()
-    (other / "extension.py").write_text("def setup(tau):\n    pass\n", encoding="utf-8")
+    (other / "extension.py").write_text("def setup(pi):\n    pass\n", encoding="utf-8")
     (repo / "pyproject.toml").write_text(
-        '[tool.tau]\nextensions = ["src/my_ext/extension.py", "src/other_ext/extension.py"]\n',
+        '[tool.pi-agent]\nextensions = ["src/my_ext/extension.py", "src/other_ext/extension.py"]\n',
         encoding="utf-8",
     )
 
@@ -335,9 +335,9 @@ def test_manifest_duplicate_entry_names_first_wins(tmp_path: Path) -> None:
     for parent in ("src", "legacy"):
         package_dir = repo / parent / "my_ext"
         package_dir.mkdir(parents=True)
-        (package_dir / "extension.py").write_text("def setup(tau):\n    pass\n", encoding="utf-8")
+        (package_dir / "extension.py").write_text("def setup(pi):\n    pass\n", encoding="utf-8")
     (repo / "pyproject.toml").write_text(
-        '[tool.tau]\nextensions = ["src/my_ext/extension.py", "legacy/my_ext/extension.py"]\n',
+        '[tool.pi-agent]\nextensions = ["src/my_ext/extension.py", "legacy/my_ext/extension.py"]\n',
         encoding="utf-8",
     )
 
@@ -354,8 +354,8 @@ def test_manifest_empty_list_falls_back_to_extension_py(tmp_path: Path) -> None:
     paths = _paths(tmp_path)
     repo = tmp_path / "repo"
     repo.mkdir()
-    (repo / "extension.py").write_text("def setup(tau):\n    pass\n", encoding="utf-8")
-    (repo / "pyproject.toml").write_text("[tool.tau]\nextensions = []\n", encoding="utf-8")
+    (repo / "extension.py").write_text("def setup(pi):\n    pass\n", encoding="utf-8")
+    (repo / "pyproject.toml").write_text("[tool.pi-agent]\nextensions = []\n", encoding="utf-8")
 
     discovered, diagnostics = discover_extensions(
         paths, extra_paths=(repo,), include_resource_dirs=False
@@ -388,9 +388,9 @@ def test_manifest_missing_entry_is_error_with_extension_py_fallback(tmp_path: Pa
     paths = _paths(tmp_path)
     repo = tmp_path / "repo"
     repo.mkdir()
-    (repo / "extension.py").write_text("def setup(tau):\n    pass\n", encoding="utf-8")
+    (repo / "extension.py").write_text("def setup(pi):\n    pass\n", encoding="utf-8")
     (repo / "pyproject.toml").write_text(
-        '[tool.tau]\nextensions = ["src/gone/extension.py"]\n', encoding="utf-8"
+        '[tool.pi-agent]\nextensions = ["src/gone/extension.py"]\n', encoding="utf-8"
     )
 
     discovered, diagnostics = discover_extensions(
@@ -403,11 +403,11 @@ def test_manifest_missing_entry_is_error_with_extension_py_fallback(tmp_path: Pa
     )
 
 
-def test_manifest_without_tau_table_falls_back_to_extension_py(tmp_path: Path) -> None:
+def test_manifest_without_pi_table_falls_back_to_extension_py(tmp_path: Path) -> None:
     paths = _paths(tmp_path)
     repo = tmp_path / "repo"
     repo.mkdir()
-    (repo / "extension.py").write_text("def setup(tau):\n    pass\n", encoding="utf-8")
+    (repo / "extension.py").write_text("def setup(pi):\n    pass\n", encoding="utf-8")
     (repo / "pyproject.toml").write_text('[project]\nname = "x"\n', encoding="utf-8")
 
     discovered, diagnostics = discover_extensions(
@@ -422,8 +422,8 @@ def test_manifest_invalid_declarations_are_error_diagnostics(tmp_path: Path) -> 
     paths = _paths(tmp_path)
     repo = tmp_path / "repo"
     repo.mkdir()
-    (repo / "extension.py").write_text("def setup(tau):\n    pass\n", encoding="utf-8")
-    (repo / "pyproject.toml").write_text("[tool.tau]\nextensions = 3\n", encoding="utf-8")
+    (repo / "extension.py").write_text("def setup(pi):\n    pass\n", encoding="utf-8")
+    (repo / "pyproject.toml").write_text("[tool.pi-agent]\nextensions = 3\n", encoding="utf-8")
 
     discovered, diagnostics = discover_extensions(
         paths, extra_paths=(repo,), include_resource_dirs=False
@@ -439,7 +439,7 @@ def test_manifest_parse_failure_is_warning_with_fallback(tmp_path: Path) -> None
     paths = _paths(tmp_path)
     repo = tmp_path / "repo"
     repo.mkdir()
-    (repo / "extension.py").write_text("def setup(tau):\n    pass\n", encoding="utf-8")
+    (repo / "extension.py").write_text("def setup(pi):\n    pass\n", encoding="utf-8")
     (repo / "pyproject.toml").write_text("not [ valid toml", encoding="utf-8")
 
     discovered, diagnostics = discover_extensions(
@@ -458,7 +458,7 @@ def test_helper_modules_stay_namespaced_in_sys_modules(tmp_path: Path) -> None:
     package_dir.mkdir(parents=True)
     (package_dir / "helper.py").write_text("VALUE = 1\n", encoding="utf-8")
     (package_dir / "extension.py").write_text(
-        "from . import helper\n\n\ndef setup(tau):\n    pass\n",
+        "from . import helper\n\n\ndef setup(pi):\n    pass\n",
         encoding="utf-8",
     )
 
@@ -466,14 +466,14 @@ def test_helper_modules_stay_namespaced_in_sys_modules(tmp_path: Path) -> None:
 
     assert "helper" not in sys.modules
     assert any(
-        name.startswith("tau_extension_pkg_ns") and name.endswith(".helper") for name in sys.modules
+        name.startswith("pi_extension_pkg_ns") and name.endswith(".helper") for name in sys.modules
     )
 
 
 def test_broken_extension_is_isolated(tmp_path: Path) -> None:
     paths = _paths(tmp_path)
     _write_extension(_user_extensions_dir(paths), "broken", "raise RuntimeError('boom')\n")
-    _write_extension(_user_extensions_dir(paths), "works", "def setup(tau):\n    pass\n")
+    _write_extension(_user_extensions_dir(paths), "works", "def setup(pi):\n    pass\n")
 
     result = load_extensions(paths)
 
@@ -493,9 +493,7 @@ def test_extension_without_setup_is_rejected(tmp_path: Path) -> None:
 
 def test_async_setup_is_rejected(tmp_path: Path) -> None:
     paths = _paths(tmp_path)
-    _write_extension(
-        _user_extensions_dir(paths), "async_setup", "async def setup(tau):\n    pass\n"
-    )
+    _write_extension(_user_extensions_dir(paths), "async_setup", "async def setup(pi):\n    pass\n")
 
     result = load_extensions(paths)
 
@@ -505,7 +503,7 @@ def test_async_setup_is_rejected(tmp_path: Path) -> None:
 
 def test_underscore_files_are_skipped(tmp_path: Path) -> None:
     paths = _paths(tmp_path)
-    _write_extension(_user_extensions_dir(paths), "_private", "def setup(tau):\n    pass\n")
+    _write_extension(_user_extensions_dir(paths), "_private", "def setup(pi):\n    pass\n")
 
     discovered, _ = discover_extensions(paths)
 
@@ -530,9 +528,9 @@ def _fake_built_in(
         del tool_call_id, arguments, signal, on_update
         return AgentToolResult(content="built-in tool")
 
-    def setup(tau: ExtensionAPI) -> None:
-        setup_apis.append(tau)
-        tau.register_tool(
+    def setup(pi: ExtensionAPI) -> None:
+        setup_apis.append(pi)
+        pi.register_tool(
             AgentTool(
                 name="fake-built-in-tool",
                 label="Fake built-in",
@@ -541,8 +539,8 @@ def _fake_built_in(
                 execute_fn=execute,
             )
         )
-        tau.register_command("fake-built-in", command)
-        tau.register_provider(
+        pi.register_command("fake-built-in", command)
+        pi.register_provider(
             DynamicProvider(
                 id="fake-built-in-provider",
                 display_name="Fake built-in provider",
@@ -558,11 +556,11 @@ def _fake_built_in(
 
 
 def test_built_in_declaration_validates_name_setup_and_hidden_flag() -> None:
-    def setup(tau: ExtensionAPI) -> None:
-        del tau
+    def setup(pi: ExtensionAPI) -> None:
+        del pi
 
-    async def async_setup(tau: ExtensionAPI) -> None:
-        del tau
+    async def async_setup(pi: ExtensionAPI) -> None:
+        del pi
 
     with pytest.raises(ValueError, match="non-empty"):
         BuiltInExtension(name="", setup=setup)
@@ -607,11 +605,9 @@ async def test_hidden_built_in_registers_real_runtime_surfaces_despite_no_extens
 def test_built_ins_load_once_before_user_explicit_and_project_sources(tmp_path: Path) -> None:
     paths = _paths(tmp_path)
     setup_apis: list[ExtensionAPI] = []
-    _write_extension(_user_extensions_dir(paths), "user_ext", "def setup(tau):\n    pass\n")
-    explicit = _write_extension(
-        tmp_path / "explicit", "explicit_ext", "def setup(tau):\n    pass\n"
-    )
-    _write_extension(_project_extensions_dir(paths), "project_ext", "def setup(tau):\n    pass\n")
+    _write_extension(_user_extensions_dir(paths), "user_ext", "def setup(pi):\n    pass\n")
+    explicit = _write_extension(tmp_path / "explicit", "explicit_ext", "def setup(pi):\n    pass\n")
+    _write_extension(_project_extensions_dir(paths), "project_ext", "def setup(pi):\n    pass\n")
     runtime = ExtensionRuntime(built_in_extensions=(_fake_built_in(setup_apis),))
 
     runtime.load(paths, extra_paths=(explicit,), include_project_dir=False)
@@ -642,8 +638,8 @@ async def test_built_in_order_preserves_tool_command_and_provider_precedence(
         _user_extensions_dir(paths),
         "shadow",
         """
-from tau_agent.tools import AgentTool, AgentToolResult
-from tau_coding.extensions import DynamicProvider, NoAuth, OpenAICompatibleTransport
+from pi_agent.tools import AgentTool, AgentToolResult
+from pi_coding.extensions import DynamicProvider, NoAuth, OpenAICompatibleTransport
 
 
 async def execute(tool_call_id, arguments, signal=None, on_update=None):
@@ -654,16 +650,16 @@ def command(args, context):
     return "user command"
 
 
-def setup(tau):
-    tau.register_tool(AgentTool(
+def setup(pi):
+    pi.register_tool(AgentTool(
         name="fake-built-in-tool",
         label="User",
         description="User",
         parameters={},
         execute_fn=execute,
     ))
-    tau.register_command("fake-built-in", command)
-    tau.register_provider(DynamicProvider(
+    pi.register_command("fake-built-in", command)
+    pi.register_provider(DynamicProvider(
         id="fake-built-in-provider",
         display_name="User provider",
         transport=OpenAICompatibleTransport(
@@ -694,11 +690,11 @@ def test_built_in_setup_failure_is_isolated_and_rolls_back_every_registration(
     tmp_path: Path,
 ) -> None:
     setup_apis: list[ExtensionAPI] = []
-    working = BuiltInExtension(name="working", setup=lambda tau: None)
+    working = BuiltInExtension(name="working", setup=lambda pi: None)
     fake = _fake_built_in(setup_apis)
 
-    def broken_setup(tau: ExtensionAPI) -> None:
-        fake.setup(tau)
+    def broken_setup(pi: ExtensionAPI) -> None:
+        fake.setup(pi)
         raise RuntimeError("broken declaration")
 
     runtime = ExtensionRuntime(
@@ -761,11 +757,11 @@ def test_setup_failure_rolls_back_registrations(tmp_path: Path) -> None:
         _user_extensions_dir(paths),
         "half_done",
         (
-            "from tau_agent.tools import AgentTool, AgentToolResult\n\n\n"
+            "from pi_agent.tools import AgentTool, AgentToolResult\n\n\n"
             "async def _run(tool_call_id, arguments, signal=None, on_update=None):\n"
             "    return AgentToolResult(content='x')\n\n\n"
-            "def setup(tau):\n"
-            "    tau.register_tool(AgentTool(name='t', description='d',"
+            "def setup(pi):\n"
+            "    pi.register_tool(AgentTool(name='t', description='d',"
             " parameters={}, execute_fn=_run))\n"
             "    raise RuntimeError('late failure')\n"
         ),
@@ -795,12 +791,12 @@ async def test_extension_tool_overrides_builtin_by_name(tmp_path: Path) -> None:
         _user_extensions_dir(paths),
         "override",
         (
-            "from tau_agent.tools import AgentTool, AgentToolResult\n\n\n"
+            "from pi_agent.tools import AgentTool, AgentToolResult\n\n\n"
             "async def _run(tool_call_id, arguments, signal=None, on_update=None):\n"
             "    return AgentToolResult("
             " content='intercepted')\n\n\n"
-            "def setup(tau):\n"
-            "    tau.register_tool(AgentTool(name='read', label='Read', description='replacement',"
+            "def setup(pi):\n"
+            "    pi.register_tool(AgentTool(name='read', label='Read', description='replacement',"
             " parameters={}, execute_fn=_run))\n"
         ),
     )
@@ -844,7 +840,7 @@ async def test_separately_loaded_same_name_sources_keep_first_tool_and_command(
     def body(marker: str, *, fail: bool = False) -> str:
         failure = "\n    raise RuntimeError('setup exploded')" if fail else ""
         return f"""
-from tau_agent.tools import AgentTool, AgentToolResult
+from pi_agent.tools import AgentTool, AgentToolResult
 
 
 async def _run(tool_call_id, arguments, signal=None, on_update=None):
@@ -855,15 +851,15 @@ def _command(args, context):
     return "{marker}"
 
 
-def setup(tau):
-    tau.register_tool(AgentTool(
+def setup(pi):
+    pi.register_tool(AgentTool(
         name="shared-tool",
         label="Shared",
         description="{marker}",
         parameters={{}},
         execute_fn=_run,
     ))
-    tau.register_command("shared-command", _command){failure}
+    pi.register_command("shared-command", _command){failure}
 """
 
     first_path = _write_extension(tmp_path / "first", "shared", body("first"))
@@ -900,8 +896,8 @@ async def test_failed_setup_cleans_every_registration_after_entry_symlink_retarg
         f"""
 from pathlib import Path
 
-from tau_agent.tools import AgentTool, AgentToolResult
-from tau_coding.extensions import DynamicProvider, NoAuth, OpenAICompatibleTransport
+from pi_agent.tools import AgentTool, AgentToolResult
+from pi_coding.extensions import DynamicProvider, NoAuth, OpenAICompatibleTransport
 
 
 async def _tool(tool_call_id, arguments, signal=None, on_update=None):
@@ -920,8 +916,8 @@ def _renderer(message, options):
     return "orphan"
 
 
-def setup(tau):
-    tau.register_provider(DynamicProvider(
+def setup(pi):
+    pi.register_provider(DynamicProvider(
         id="orphan-provider",
         display_name="Orphan",
         transport=OpenAICompatibleTransport(
@@ -929,18 +925,18 @@ def setup(tau):
             auth=NoAuth(),
         ),
     ))
-    tau.register_tool(AgentTool(
+    pi.register_tool(AgentTool(
         name="orphan-tool",
         label="Orphan",
         description="Orphan",
         parameters={{}},
         execute_fn=_tool,
     ))
-    tau.register_command("orphan-command", _command)
-    tau.add_prompt_guideline("orphan guideline")
-    tau.add_prompt_section("Orphan section", "orphan body")
-    tau.register_message_renderer("orphan:message", _renderer)
-    tau.on("input", _handler)
+    pi.register_command("orphan-command", _command)
+    pi.add_prompt_guideline("orphan guideline")
+    pi.add_prompt_section("Orphan section", "orphan body")
+    pi.register_message_renderer("orphan:message", _renderer)
+    pi.on("input", _handler)
     entry = Path({str(entry)!r})
     entry.unlink()
     entry.symlink_to(Path({str(target_b)!r}))
@@ -948,7 +944,7 @@ def setup(tau):
 """,
         encoding="utf-8",
     )
-    target_b.write_text("def setup(tau):\n    pass\n", encoding="utf-8")
+    target_b.write_text("def setup(pi):\n    pass\n", encoding="utf-8")
     try:
         entry.symlink_to(target_a)
     except OSError:
@@ -979,8 +975,8 @@ def test_extension_commands_layer_onto_default_registry(tmp_path: Path) -> None:
         (
             "def _handler(args, context):\n"
             "    return f'echo: {args}'\n\n\n"
-            "def setup(tau):\n"
-            "    tau.register_command('echo', _handler, description='Echo args.')\n"
+            "def setup(pi):\n"
+            "    pi.register_command('echo', _handler, description='Echo args.')\n"
         ),
     )
 
@@ -999,7 +995,7 @@ def test_extension_command_cannot_shadow_builtin(tmp_path: Path) -> None:
     _write_extension(
         _user_extensions_dir(paths),
         "shadow",
-        ("def setup(tau):\n    tau.register_command('model', lambda args, context: 'hijacked')\n"),
+        ("def setup(pi):\n    pi.register_command('model', lambda args, context: 'hijacked')\n"),
     )
 
     runtime = _runtime_with(paths)
@@ -1019,8 +1015,8 @@ def test_extension_command_errors_are_contained(tmp_path: Path) -> None:
         (
             "def _handler(args, context):\n"
             "    raise RuntimeError('bad command')\n\n\n"
-            "def setup(tau):\n"
-            "    tau.register_command('boom', _handler)\n"
+            "def setup(pi):\n"
+            "    pi.register_command('boom', _handler)\n"
         ),
     )
 
@@ -1037,7 +1033,7 @@ def test_extension_command_errors_are_contained(tmp_path: Path) -> None:
 
 
 def _command_context(registry: object, text: str, name: str, args: str) -> object:
-    from tau_coding.commands import CommandContext
+    from pi_coding.commands import CommandContext
 
     return CommandContext(session=None, registry=registry, text=text, name=name, args=args)  # type: ignore[arg-type]
 
@@ -1076,7 +1072,7 @@ def test_unknown_event_subscription_is_a_diagnostic(tmp_path: Path) -> None:
     _write_extension(
         _user_extensions_dir(paths),
         "bad_event",
-        "def setup(tau):\n    tau.on('no_such_event', lambda event, context: None)\n",
+        "def setup(pi):\n    pi.on('no_such_event', lambda event, context: None)\n",
     )
 
     runtime = _runtime_with(paths)
@@ -1111,7 +1107,7 @@ async def test_tool_call_hook_can_block(tmp_path: Path) -> None:
 async def test_tool_call_hook_can_rewrite_arguments(tmp_path: Path) -> None:
     runtime = ExtensionRuntime()
     api = _register_inline_extension(runtime, "rewrite")
-    api.on("tool_call", lambda event, context: ToolCallHookResult(arguments={"who": "tau"}))
+    api.on("tool_call", lambda event, context: ToolCallHookResult(arguments={"who": "pi"}))
 
     seen: list[dict[str, object]] = []
 
@@ -1126,7 +1122,7 @@ async def test_tool_call_hook_can_rewrite_arguments(tmp_path: Path) -> None:
     await runtime.before_tool_call(context)
     await tool.execute("call-1", context.args)
 
-    assert seen == [{"who": "tau"}]
+    assert seen == [{"who": "pi"}]
 
 
 async def test_tool_call_hook_can_clear_arguments(tmp_path: Path) -> None:
@@ -1397,7 +1393,7 @@ async def test_agent_event_fan_out_and_wildcard(tmp_path: Path) -> None:
         return lambda: listeners.remove(listener)
 
     runtime.attach_harness_listener(subscribe)  # type: ignore[arg-type]
-    from tau_agent.events import ToolExecutionStartEvent, TurnStartEvent
+    from pi_agent.events import ToolExecutionStartEvent, TurnStartEvent
 
     await listeners[0](ToolExecutionStartEvent(tool_call_id="1", tool_name="x", args={}))  # type: ignore[operator]
     await listeners[0](TurnStartEvent())  # type: ignore[operator]
@@ -1407,11 +1403,11 @@ async def test_agent_event_fan_out_and_wildcard(tmp_path: Path) -> None:
 
 
 async def test_extension_turn_events_include_pi_session_metadata(tmp_path: Path) -> None:
-    from tau_agent.events import AgentStartEvent
-    from tau_agent.events import TurnEndEvent as AgentTurnEndEvent
-    from tau_agent.events import TurnStartEvent as AgentTurnStartEvent
-    from tau_agent.messages import UserMessage
-    from tau_coding.extensions import TurnEndEvent, TurnStartEvent
+    from pi_agent.events import AgentStartEvent
+    from pi_agent.events import TurnEndEvent as AgentTurnEndEvent
+    from pi_agent.events import TurnStartEvent as AgentTurnStartEvent
+    from pi_agent.messages import UserMessage
+    from pi_coding.extensions import TurnEndEvent, TurnStartEvent
 
     runtime = ExtensionRuntime()
     api = _register_inline_extension(runtime, "turn_observer")
@@ -1447,11 +1443,11 @@ async def test_extension_turn_events_include_pi_session_metadata(tmp_path: Path)
 
 
 async def test_extension_turn_index_resets_for_each_agent_run(tmp_path: Path) -> None:
-    from tau_agent.events import AgentStartEvent
-    from tau_agent.events import TurnEndEvent as AgentTurnEndEvent
-    from tau_agent.events import TurnStartEvent as AgentTurnStartEvent
-    from tau_agent.messages import UserMessage
-    from tau_coding.extensions import TurnStartEvent
+    from pi_agent.events import AgentStartEvent
+    from pi_agent.events import TurnEndEvent as AgentTurnEndEvent
+    from pi_agent.events import TurnStartEvent as AgentTurnStartEvent
+    from pi_agent.messages import UserMessage
+    from pi_coding.extensions import TurnStartEvent
 
     runtime = ExtensionRuntime()
     api = _register_inline_extension(runtime, "turn_observer")
@@ -1476,9 +1472,9 @@ async def test_extension_turn_index_resets_for_each_agent_run(tmp_path: Path) ->
 async def test_message_end_event_surfaces_provider_usage(tmp_path: Path) -> None:
     from typing import cast
 
-    from tau_agent import Usage
-    from tau_agent.events import MessageEndEvent
-    from tau_coding.extensions.api import ExtensionAPI
+    from pi_agent import Usage
+    from pi_agent.events import MessageEndEvent
+    from pi_coding.extensions.api import ExtensionAPI
 
     runtime = ExtensionRuntime()
     api = cast(ExtensionAPI, _register_inline_extension(runtime, "usage_observer"))
@@ -1515,8 +1511,8 @@ async def test_message_end_replacement_chains_into_state_storage_and_next_contex
     tmp_path: Path,
 ) -> None:
     body = (
-        "from tau_agent import TextContent, UserMessage\n"
-        "from tau_coding.extensions import MessageEndHookResult\n\n\n"
+        "from pi_agent import TextContent, UserMessage\n"
+        "from pi_coding.extensions import MessageEndHookResult\n\n\n"
         "def _replace(event, suffix):\n"
         "    if event.message.role != 'assistant':\n"
         "        return None\n"
@@ -1524,12 +1520,12 @@ async def test_message_end_replacement_chains_into_state_storage_and_next_contex
         "        'content': [TextContent(text=event.message.text + suffix)]\n"
         "    })\n"
         "    return MessageEndHookResult(message=replacement)\n\n\n"
-        "def setup(tau):\n"
-        "    tau.on('message_end', lambda event, context: _replace(event, '|one'))\n"
-        "    tau.on('message_end', lambda event, context: "
+        "def setup(pi):\n"
+        "    pi.on('message_end', lambda event, context: _replace(event, '|one'))\n"
+        "    pi.on('message_end', lambda event, context: "
         "MessageEndHookResult(message=UserMessage(content='wrong-role')) "
         "if event.message.role == 'assistant' else None)\n"
-        "    tau.on('message_end', lambda event, context: _replace(event, '|two'))\n"
+        "    pi.on('message_end', lambda event, context: _replace(event, '|two'))\n"
     )
     provider = FakeProvider(
         [
@@ -1565,7 +1561,7 @@ async def test_raising_event_handler_is_recorded(tmp_path: Path) -> None:
     listeners: list[object] = []
     runtime.attach_harness_listener(lambda fn: (listeners.append(fn), lambda: None)[1])  # type: ignore[arg-type]
 
-    from tau_agent.events import TurnStartEvent
+    from pi_agent.events import TurnStartEvent
 
     await listeners[0](TurnStartEvent())  # type: ignore[operator]
 
@@ -1721,9 +1717,9 @@ class RecordingUiBridge:
 
     @property
     def theme(self):  # noqa: ANN202 - TuiTheme, imported lazily by the default
-        from tau_coding.tui.config import TAU_DARK_THEME
+        from pi_coding.tui.config import PI_DARK_THEME
 
-        return TAU_DARK_THEME
+        return PI_DARK_THEME
 
     def get_prompt_text(self) -> str:
         return ""
@@ -1736,7 +1732,7 @@ class RecordingUiBridge:
 
     def open_main_view(self, factory):  # noqa: ANN001
         self.calls.append(("open_main_view", (), {}))
-        from tau_coding.extensions.api import _DeadMainViewHandle
+        from pi_coding.extensions.api import _DeadMainViewHandle
 
         return _DeadMainViewHandle()
 
@@ -1807,7 +1803,7 @@ class RecordingUiBridge:
 async def test_context_ui_round_trips_dialogs(tmp_path: Path) -> None:
     from typing import cast
 
-    from tau_coding.extensions.api import ExtensionAPI
+    from pi_coding.extensions.api import ExtensionAPI
 
     ui = RecordingUiBridge(select_result="b", confirm_result=True, input_result="typed")
     runtime = ExtensionRuntime(ui=ui)
@@ -1831,7 +1827,7 @@ async def test_context_ui_round_trips_dialogs(tmp_path: Path) -> None:
 async def test_context_ui_cancel_returns_pi_defaults(tmp_path: Path) -> None:
     from typing import cast
 
-    from tau_coding.extensions.api import ExtensionAPI
+    from pi_coding.extensions.api import ExtensionAPI
 
     ui = RecordingUiBridge()  # select None, confirm False, input None
     runtime = ExtensionRuntime(ui=ui)
@@ -1843,7 +1839,7 @@ async def test_context_ui_cancel_returns_pi_defaults(tmp_path: Path) -> None:
 
 
 async def test_headless_ui_bridges_return_pi_defaults(tmp_path: Path) -> None:
-    from tau_coding.extensions import NullUiBridge, StderrUiBridge
+    from pi_coding.extensions import NullUiBridge, StderrUiBridge
 
     for bridge in (NullUiBridge(), StderrUiBridge()):
         assert bridge.has_ui is False
@@ -1853,7 +1849,7 @@ async def test_headless_ui_bridges_return_pi_defaults(tmp_path: Path) -> None:
 
 
 async def test_headless_ui_bridges_component_seam_are_noops(tmp_path: Path) -> None:
-    from tau_coding.extensions import NullUiBridge, StderrUiBridge
+    from pi_coding.extensions import NullUiBridge, StderrUiBridge
 
     for bridge in (NullUiBridge(), StderrUiBridge()):
         assert bridge.supports_components is False
@@ -1880,7 +1876,7 @@ async def test_headless_ui_bridges_component_seam_are_noops(tmp_path: Path) -> N
 async def test_context_ui_components_pass_through(tmp_path: Path) -> None:
     from typing import cast
 
-    from tau_coding.extensions.api import ExtensionAPI
+    from pi_coding.extensions.api import ExtensionAPI
 
     ui = RecordingUiBridge()
     runtime = ExtensionRuntime(ui=ui)
@@ -1901,7 +1897,7 @@ async def test_context_ui_components_pass_through(tmp_path: Path) -> None:
 async def test_context_ui_sidebar_is_owned_and_passes_through(tmp_path: Path) -> None:
     from typing import cast
 
-    from tau_coding.extensions.api import ExtensionAPI
+    from pi_coding.extensions.api import ExtensionAPI
 
     ui = RecordingUiBridge()
     runtime = ExtensionRuntime(ui=ui)
@@ -1925,8 +1921,8 @@ async def test_context_ui_sidebar_is_owned_and_passes_through(tmp_path: Path) ->
 async def test_context_ui_sidebar_validates_keys_and_titles(tmp_path: Path) -> None:
     from typing import cast
 
-    from tau_coding.extensions import ExtensionError
-    from tau_coding.extensions.api import ExtensionAPI
+    from pi_coding.extensions import ExtensionError
+    from pi_coding.extensions.api import ExtensionAPI
 
     runtime = ExtensionRuntime(ui=RecordingUiBridge())
     api = cast(ExtensionAPI, _register_inline_extension(runtime, "sidebar"))
@@ -1940,8 +1936,8 @@ async def test_context_ui_sidebar_validates_keys_and_titles(tmp_path: Path) -> N
 async def test_context_ui_sidebar_degrades_on_older_host_bridge(tmp_path: Path) -> None:
     from typing import cast
 
-    from tau_coding.extensions import UiBridge
-    from tau_coding.extensions.api import ExtensionAPI
+    from pi_coding.extensions import UiBridge
+    from pi_coding.extensions.api import ExtensionAPI
 
     runtime = ExtensionRuntime(ui=cast(UiBridge, object()))
     api = cast(ExtensionAPI, _register_inline_extension(runtime, "legacy-host"))
@@ -1955,7 +1951,7 @@ async def test_context_ui_sidebar_degrades_on_older_host_bridge(tmp_path: Path) 
 async def test_context_ui_components_headless_reports_unsupported(tmp_path: Path) -> None:
     from typing import cast
 
-    from tau_coding.extensions.api import ExtensionAPI
+    from pi_coding.extensions.api import ExtensionAPI
 
     runtime = ExtensionRuntime()  # defaults to NullUiBridge
     api = cast(ExtensionAPI, _register_inline_extension(runtime, "headless-components"))
@@ -1967,7 +1963,7 @@ async def test_context_ui_components_headless_reports_unsupported(tmp_path: Path
 async def test_default_runtime_ui_is_headless(tmp_path: Path) -> None:
     from typing import cast
 
-    from tau_coding.extensions.api import ExtensionAPI
+    from pi_coding.extensions.api import ExtensionAPI
 
     runtime = ExtensionRuntime()  # defaults to NullUiBridge
     api = cast(ExtensionAPI, _register_inline_extension(runtime, "headless"))
@@ -2002,8 +1998,8 @@ async def test_sync_command_spawns_task_that_awaits_dialog(tmp_path: Path) -> No
             "            context.api.send_user_message(f'run {choice}')\n"
             "    asyncio.get_running_loop().create_task(_menu())\n"
             "    return 'opening menu...'\n\n\n"
-            "def setup(tau):\n"
-            "    tau.register_command('menu', _handler)\n"
+            "def setup(pi):\n"
+            "    pi.register_command('menu', _handler)\n"
         ),
     )
 
@@ -2029,7 +2025,7 @@ async def test_sync_command_spawns_task_that_awaits_dialog(tmp_path: Path) -> No
 
 
 def _register_inline_extension(runtime: ExtensionRuntime, name: str) -> object:
-    from tau_coding.extensions.loader import LoadedExtension
+    from pi_coding.extensions.loader import LoadedExtension
 
     captured: dict[str, object] = {}
 
@@ -2056,9 +2052,7 @@ def _make_tool(name: str, *, content: str) -> AgentTool:
     return AgentTool(name=name, label=name, description="d", parameters={}, execute_fn=executor)
 
 
-def _before_tool_context(
-    tool: AgentTool, arguments: dict[str, JSONValue]
-) -> BeforeToolCallContext:
+def _before_tool_context(tool: AgentTool, arguments: dict[str, JSONValue]) -> BeforeToolCallContext:
     return BeforeToolCallContext(
         AssistantMessage(),
         ToolCall(id="call-1", name=tool.name, arguments=arguments),
@@ -2112,7 +2106,7 @@ async def test_session_loads_built_in_without_extension_discovery_or_project_tru
 ) -> None:
     from dataclasses import replace as dataclass_replace
 
-    import tau_coding.built_in_extensions as declarations
+    import pi_coding.built_in_extensions as declarations
 
     setup_apis: list[ExtensionAPI] = []
     monkeypatch.setattr(
@@ -2133,7 +2127,7 @@ async def test_session_loads_built_in_without_extension_discovery_or_project_tru
             tmp_path,
             FakeProvider([]),
             extension_body=(
-                "def setup(tau):\n    tau.add_prompt_guideline('user should not load')\n"
+                "def setup(pi):\n    pi.add_prompt_guideline('user should not load')\n"
             ),
         ),
         extensions_enabled=False,
@@ -2161,8 +2155,8 @@ async def test_session_lifecycle_recreates_built_in_in_a_fresh_generation(
 ) -> None:
     from dataclasses import replace as dataclass_replace
 
-    import tau_coding.built_in_extensions as declarations
-    from tau_coding import SessionManager, TauPaths
+    import pi_coding.built_in_extensions as declarations
+    from pi_coding import PiPaths, SessionManager
 
     setup_apis: list[ExtensionAPI] = []
     monkeypatch.setattr(
@@ -2171,7 +2165,7 @@ async def test_session_lifecycle_recreates_built_in_in_a_fresh_generation(
         (_fake_built_in(setup_apis),),
     )
     manager = SessionManager(
-        TauPaths(home=tmp_path / "home-tau", agents_home=tmp_path / "home-agents")
+        PiPaths(home=tmp_path / "home-pi", agents_home=tmp_path / "home-agents")
     )
     config = _session_config(tmp_path, FakeProvider([]))
     initial = manager.create_session(cwd=config.cwd, model="fake")
@@ -2209,9 +2203,9 @@ async def test_session_exposes_extension_tools_and_commands(tmp_path: Path) -> N
         "\n\ndef _cmd(args, context):\n"
         "    return 'extension says hi'\n\n\n"
         "_original_setup = setup\n\n\n"
-        "def setup(tau):\n"
-        "    _original_setup(tau)\n"
-        "    tau.register_command('hi', _cmd, description='Say hi.')\n"
+        "def setup(pi):\n"
+        "    _original_setup(pi)\n"
+        "    pi.register_command('hi', _cmd, description='Say hi.')\n"
     )
     session = await CodingSession.load(
         _session_config(tmp_path, FakeProvider([]), extension_body=body)
@@ -2219,7 +2213,7 @@ async def test_session_exposes_extension_tools_and_commands(tmp_path: Path) -> N
 
     tool_names = [tool.name for tool in session.tools]
     assert "hello" in tool_names
-    assert tool_names[:4] == ["read", "write", "edit", "bash"]
+    assert tool_names[:4] == ["read", "bash", "edit", "write"]
 
     result = session.handle_command("/hi")
     assert result.handled is True
@@ -2229,7 +2223,7 @@ async def test_session_exposes_extension_tools_and_commands(tmp_path: Path) -> N
 
 
 async def test_extension_guideline_reaches_system_prompt(tmp_path: Path) -> None:
-    body = "def setup(tau):\n    tau.add_prompt_guideline('Never commit directly to main')\n"
+    body = "def setup(pi):\n    pi.add_prompt_guideline('Never commit directly to main')\n"
     session = await CodingSession.load(
         _session_config(tmp_path, FakeProvider([]), extension_body=body)
     )
@@ -2240,7 +2234,7 @@ async def test_extension_guideline_reaches_system_prompt(tmp_path: Path) -> None
 async def test_session_metadata_changes_reach_extensions(tmp_path: Path) -> None:
     config = _session_config(tmp_path, FakeProvider([]))
     manager = SessionManager(
-        TauPaths(home=tmp_path / "manager-tau", agents_home=tmp_path / "manager-agents")
+        PiPaths(home=tmp_path / "manager-pi", agents_home=tmp_path / "manager-agents")
     )
     record = manager.create_session(cwd=config.cwd, model="fake", title="Old name")
     session = await CodingSession.load(
@@ -2299,7 +2293,7 @@ async def test_auto_session_name_change_reaches_extensions(tmp_path: Path) -> No
     )
     config = _session_config(tmp_path, provider)
     manager = SessionManager(
-        TauPaths(home=tmp_path / "manager-tau", agents_home=tmp_path / "manager-agents")
+        PiPaths(home=tmp_path / "manager-pi", agents_home=tmp_path / "manager-agents")
     )
     record = manager.create_session(cwd=config.cwd, model="fake")
     session = await CodingSession.load(
@@ -2326,8 +2320,8 @@ async def test_extension_prompt_section_reaches_system_prompt_after_user_append(
     tmp_path: Path,
 ) -> None:
     body = (
-        "def setup(tau):\n"
-        "    tau.add_prompt_section('Review procedure', "
+        "def setup(pi):\n"
+        "    pi.add_prompt_section('Review procedure', "
         "'First step.\\n\\n```bash\\nuv run pytest\\n```')\n"
     )
     config = _session_config(tmp_path, FakeProvider([]), extension_body=body)
@@ -2352,7 +2346,7 @@ async def test_reload_picks_up_prompt_section_changes(tmp_path: Path) -> None:
     _write_extension(
         _user_extensions_dir(paths),
         "late_section",
-        "def setup(tau):\n    tau.add_prompt_section('Late procedure', 'Run the checks.')\n",
+        "def setup(pi):\n    pi.add_prompt_section('Late procedure', 'Run the checks.')\n",
     )
 
     summary = await session.reload()
@@ -2370,7 +2364,7 @@ async def test_reload_picks_up_guideline_changes(tmp_path: Path) -> None:
     _write_extension(
         _user_extensions_dir(paths),
         "late_guideline",
-        "def setup(tau):\n    tau.add_prompt_guideline('Prefer uv over pip')\n",
+        "def setup(pi):\n    pi.add_prompt_guideline('Prefer uv over pip')\n",
     )
 
     summary = await session.reload()
@@ -2382,8 +2376,8 @@ async def test_reload_picks_up_guideline_changes(tmp_path: Path) -> None:
 async def test_session_start_deferred_until_host_emits(tmp_path: Path) -> None:
     body = (
         "EVENTS = []\n\n\n"
-        "def setup(tau):\n"
-        "    tau.on('session_start', lambda event, context: EVENTS.append(event.reason))\n"
+        "def setup(pi):\n"
+        "    pi.on('session_start', lambda event, context: EVENTS.append(event.reason))\n"
     )
     session = await CodingSession.load(
         _session_config(tmp_path, FakeProvider([]), extension_body=body)
@@ -2408,9 +2402,9 @@ async def test_session_start_handler_can_notify_through_attached_bridge(
     tmp_path: Path,
 ) -> None:
     body = (
-        "def setup(tau):\n"
-        "    tau.on('session_start', "
-        "lambda event, context: tau.notify('loaded', 'info'))\n"
+        "def setup(pi):\n"
+        "    pi.on('session_start', "
+        "lambda event, context: pi.notify('loaded', 'info'))\n"
     )
     session = await CodingSession.load(
         _session_config(tmp_path, FakeProvider([]), extension_body=body)
@@ -2426,13 +2420,13 @@ async def test_session_start_handler_can_notify_through_attached_bridge(
 
 async def test_input_handled_prevents_agent_run(tmp_path: Path) -> None:
     body = (
-        "from tau_coding.extensions import InputHookResult\n\n\n"
+        "from pi_coding.extensions import InputHookResult\n\n\n"
         "def _hook(event, context):\n"
         "    if event.text.startswith('intercept'):\n"
         "        return InputHookResult(action='handled', message='caught')\n"
         "    return None\n\n\n"
-        "def setup(tau):\n"
-        "    tau.on('input', _hook)\n"
+        "def setup(pi):\n"
+        "    pi.on('input', _hook)\n"
     )
     provider = FakeProvider([])
     session = await CodingSession.load(_session_config(tmp_path, provider, extension_body=body))
@@ -2448,12 +2442,12 @@ async def test_prompt_input_hook_defaults_to_interactive(tmp_path: Path) -> None
     # The plain session.prompt path (TUI idle submit, print mode) tags the
     # input hook with source="interactive" and no streaming behavior.
     body = (
-        "from tau_coding.extensions import InputHookResult\n\n\n"
+        "from pi_coding.extensions import InputHookResult\n\n\n"
         "def _hook(event, context):\n"
         "    tag = f'{event.text}|src={event.source}|sb={event.streaming_behavior}'\n"
         "    return InputHookResult(action='transform', text=tag)\n\n\n"
-        "def setup(tau):\n"
-        "    tau.on('input', _hook)\n"
+        "def setup(pi):\n"
+        "    pi.on('input', _hook)\n"
     )
     provider = FakeProvider(
         [
@@ -2475,11 +2469,11 @@ async def test_prompt_input_hook_source_extension(tmp_path: Path) -> None:
     # source="extension" flows through prompt() to the input hook, mirroring the
     # TUI extension-initiated idle turn (send_user_message -> turn_requested).
     body = (
-        "from tau_coding.extensions import InputHookResult\n\n\n"
+        "from pi_coding.extensions import InputHookResult\n\n\n"
         "def _hook(event, context):\n"
         "    return InputHookResult(action='transform', text=f'{event.text}|{event.source}')\n\n\n"
-        "def setup(tau):\n"
-        "    tau.on('input', _hook)\n"
+        "def setup(pi):\n"
+        "    pi.on('input', _hook)\n"
     )
     provider = FakeProvider(
         [
@@ -2518,8 +2512,8 @@ async def test_agent_events_reach_extension_after_interrupted_tool_repair(
 
     body = (
         "EVENTS = []\n\n\n"
-        "def setup(tau):\n"
-        "    tau.on('agent_event', lambda event, context: EVENTS.append(event.type))\n"
+        "def setup(pi):\n"
+        "    pi.on('agent_event', lambda event, context: EVENTS.append(event.type))\n"
     )
     provider = FakeProvider(
         [
@@ -2540,13 +2534,13 @@ async def test_agent_events_reach_extension_after_interrupted_tool_repair(
 
 async def test_extension_tool_call_block_reaches_model(tmp_path: Path) -> None:
     body = (
-        "from tau_coding.extensions import ToolCallHookResult\n\n\n"
+        "from pi_coding.extensions import ToolCallHookResult\n\n\n"
         "def _hook(event, context):\n"
         "    if event.tool_name == 'bash':\n"
         "        return ToolCallHookResult(block=True, reason='no shell today')\n"
         "    return None\n\n\n"
-        "def setup(tau):\n"
-        "    tau.on('tool_call', _hook)\n"
+        "def setup(pi):\n"
+        "    pi.on('tool_call', _hook)\n"
     )
     provider = FakeProvider(
         [
@@ -2657,10 +2651,10 @@ async def test_session_lifecycle_awaits_outgoing_provider_cleanup(
 ) -> None:
     from dataclasses import replace as dataclass_replace
 
-    from tau_coding import SessionManager, TauPaths
+    from pi_coding import PiPaths, SessionManager
 
     manager = SessionManager(
-        TauPaths(home=tmp_path / "home-tau", agents_home=tmp_path / "home-agents")
+        PiPaths(home=tmp_path / "home-pi", agents_home=tmp_path / "home-agents")
     )
     config = _session_config(tmp_path, FakeProvider([]))
     record = manager.create_session(cwd=config.cwd, model="fake")
@@ -2730,10 +2724,10 @@ async def test_published_lifecycle_adoption_contains_cancellation_during_outgoin
 ) -> None:
     from dataclasses import replace as dataclass_replace
 
-    from tau_coding import SessionManager, TauPaths
+    from pi_coding import PiPaths, SessionManager
 
     manager = SessionManager(
-        TauPaths(home=tmp_path / "home-tau", agents_home=tmp_path / "home-agents")
+        PiPaths(home=tmp_path / "home-pi", agents_home=tmp_path / "home-agents")
     )
     config = _session_config(tmp_path, FakeProvider([]))
     record = manager.create_session(cwd=config.cwd, model="fake")
@@ -2879,23 +2873,23 @@ async def test_final_close_finishes_registry_and_each_provider_before_propagatin
 
 
 async def test_runtime_survives_new_session_swap(tmp_path: Path) -> None:
-    from tau_coding import SessionManager
+    from pi_coding import SessionManager
 
     body = (
         "EVENTS = []\n\n\n"
-        "def setup(tau):\n"
-        "    tau.on('session_start', "
+        "def setup(pi):\n"
+        "    pi.on('session_start', "
         "lambda event, context: EVENTS.append(('start', event.reason)))\n"
-        "    tau.on('session_shutdown', "
+        "    pi.on('session_shutdown', "
         "lambda event, context: EVENTS.append(('stop', event.reason)))\n"
     )
     from dataclasses import replace as dataclass_replace
 
-    from tau_coding import TauPaths
+    from pi_coding import PiPaths
 
     provider = FakeProvider([])
     manager = SessionManager(
-        TauPaths(home=tmp_path / "home-tau", agents_home=tmp_path / "home-agents")
+        PiPaths(home=tmp_path / "home-pi", agents_home=tmp_path / "home-agents")
     )
     config = _session_config(tmp_path, provider, extension_body=body)
     record = manager.create_session(cwd=config.cwd, model="fake")
@@ -2918,11 +2912,11 @@ async def test_session_swap_clears_host_extension_components(tmp_path: Path) -> 
     # otherwise survive the switch (session_start handlers can re-mount).
     from dataclasses import replace as dataclass_replace
 
-    from tau_coding import SessionManager, TauPaths
+    from pi_coding import PiPaths, SessionManager
 
     provider = FakeProvider([])
     manager = SessionManager(
-        TauPaths(home=tmp_path / "home-tau", agents_home=tmp_path / "home-agents")
+        PiPaths(home=tmp_path / "home-pi", agents_home=tmp_path / "home-agents")
     )
     config = _session_config(tmp_path, provider)
     record = manager.create_session(cwd=config.cwd, model="fake")
@@ -2989,7 +2983,7 @@ def test_extension_can_read_and_change_inference_provider(tmp_path: Path) -> Non
 # -- reload staleness guard (Pi's assertActive/invalidate) ---------------------
 
 
-API_CAPTURING_EXTENSION = "APIS = []\n\n\ndef setup(tau):\n    APIS.append(tau)\n"
+API_CAPTURING_EXTENSION = "APIS = []\n\n\ndef setup(pi):\n    APIS.append(pi)\n"
 
 
 def test_reset_for_reload_invalidates_prior_api_actions(tmp_path: Path) -> None:
@@ -3070,8 +3064,8 @@ async def test_reload_invalidates_old_instance_and_new_instance_works(
 async def test_failed_resource_reload_does_not_emit_extension_shutdown(tmp_path: Path) -> None:
     body = (
         "EVENTS = []\n\n"
-        "def setup(tau):\n"
-        "    tau.on('session_shutdown', "
+        "def setup(pi):\n"
+        "    pi.on('session_shutdown', "
         "lambda event, context: EVENTS.append(('stop', event.reason)))\n"
     )
     paths = _paths(tmp_path)
@@ -3095,14 +3089,14 @@ async def test_reload_awaits_shutdown_before_invalidation_and_starts_new_generat
 ) -> None:
     body = (
         "EVENTS = []\n\n"
-        "def setup(tau):\n"
-        "    @tau.on('session_shutdown')\n"
+        "def setup(pi):\n"
+        "    @pi.on('session_shutdown')\n"
         "    async def stop(event, context):\n"
-        "        EVENTS.append(('stop', event.reason, tau.name))\n"
-        "    @tau.on('session_start')\n"
+        "        EVENTS.append(('stop', event.reason, pi.name))\n"
+        "    @pi.on('session_start')\n"
         "    async def start(event, context):\n"
-        "        EVENTS.append(('start', event.reason, tau.name))\n"
-        "        tau.context.ui.components.set_slot_widget('status', [event.reason])\n"
+        "        EVENTS.append(('start', event.reason, pi.name))\n"
+        "        pi.context.ui.components.set_slot_widget('status', [event.reason])\n"
     )
     session = await CodingSession.load(
         _session_config(tmp_path, FakeProvider([]), extension_body=body)
@@ -3131,11 +3125,11 @@ async def test_session_replacement_rebuilds_and_invalidates_source_extensions(
 ) -> None:
     from dataclasses import replace as dataclass_replace
 
-    from tau_coding import SessionManager, TauPaths
+    from pi_coding import PiPaths, SessionManager
 
     provider = FakeProvider([])
     manager = SessionManager(
-        TauPaths(home=tmp_path / "home-tau", agents_home=tmp_path / "home-agents")
+        PiPaths(home=tmp_path / "home-pi", agents_home=tmp_path / "home-agents")
     )
     config = _session_config(tmp_path, provider, extension_body=API_CAPTURING_EXTENSION)
     record = manager.create_session(cwd=config.cwd, model="fake")
@@ -3491,7 +3485,7 @@ def _loaded_extension_module(name: str) -> object:
     candidates = [
         module
         for module_name, module in sys.modules.items()
-        if module_name.startswith(f"tau_extension_{name}") and "." not in module_name
+        if module_name.startswith(f"pi_extension_{name}") and "." not in module_name
     ]
     assert candidates, f"extension module {name} not loaded"
     return candidates[-1]

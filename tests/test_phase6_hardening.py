@@ -9,9 +9,9 @@ from pathlib import Path
 import httpx
 import pytest
 
-from tau_agent.harness import SimpleCancellationToken
-from tau_coding.credentials import FileCredentialStore
-from tau_coding.extensions import (
+from pi_agent.harness import SimpleCancellationToken
+from pi_coding.credentials import FileCredentialStore
+from pi_coding.extensions import (
     DynamicProvider,
     DynamicProviderRegistry,
     ExtensionRuntime,
@@ -27,21 +27,21 @@ from tau_coding.extensions import (
     ProviderModel,
     ProviderModelSnapshot,
 )
-from tau_coding.extensions.builtins.llama_cpp.service import (
+from pi_coding.extensions.builtins.llama_cpp.service import (
     LlamaCppService,
 )
-from tau_coding.extensions.builtins.llama_cpp.state import (
+from pi_coding.extensions.builtins.llama_cpp.state import (
     LLAMA_CPP_CREDENTIAL_PREFIX,
     LlamaCppIntegrationState,
     LlamaCppStateError,
     LlamaCppStateStore,
     LlamaCppStoredModel,
 )
-from tau_coding.local_backends import (
+from pi_coding.local_backends import (
     LOCAL_OPERATION_CANCELLATION_TIMEOUT_SECONDS,
     LocalOperationResult,
 )
-from tau_coding.paths import TauPaths
+from pi_coding.paths import PiPaths
 
 pytestmark = pytest.mark.anyio
 
@@ -228,7 +228,7 @@ async def test_local_replacement_discards_late_result_and_new_operation_wins() -
 
 async def test_missing_model_reference_survives_refresh_and_restart(tmp_path: Path) -> None:
     endpoint = "http://local.test:8080"
-    paths = TauPaths(home=tmp_path / "tau", agents_home=tmp_path / "agents")
+    paths = PiPaths(home=tmp_path / "pi", agents_home=tmp_path / "agents")
     state_store = LlamaCppStateStore(paths=paths)
     state_store.save(
         LlamaCppIntegrationState(
@@ -281,7 +281,7 @@ def test_state_rejects_non_exact_stale_model_references(selected_model: str) -> 
 
 async def test_secret_state_and_diagnostics_never_contain_key(tmp_path: Path) -> None:
     secret = "phase-six-secret"
-    paths = TauPaths(home=tmp_path / "tau", agents_home=tmp_path / "agents")
+    paths = PiPaths(home=tmp_path / "pi", agents_home=tmp_path / "agents")
     state_store = LlamaCppStateStore(paths=paths)
     credentials = FileCredentialStore(paths.home / "credentials.json")
 

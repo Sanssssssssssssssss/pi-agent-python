@@ -8,7 +8,7 @@ import httpx
 import pytest
 
 from fixtures.ollama_adapter_spike import OllamaAdapterSpike, context
-from tau_coding.extensions import DynamicProviderRegistry, LocalBackendRegistry
+from pi_coding.extensions import DynamicProviderRegistry, LocalBackendRegistry
 
 pytestmark = pytest.mark.anyio
 

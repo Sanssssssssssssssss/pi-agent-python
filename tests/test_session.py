@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from tau_agent import (
+from pi_agent import (
     AssistantMessage,
     BashExecutionMessage,
     BranchSummaryMessage,
@@ -16,8 +16,8 @@ from tau_agent import (
     ToolResultMessage,
     UserMessage,
 )
-from tau_agent.messages import convert_to_llm
-from tau_agent.session import (
+from pi_agent.messages import convert_to_llm
+from pi_agent.session import (
     BranchSummaryEntry,
     CompactionEntry,
     CustomEntry,

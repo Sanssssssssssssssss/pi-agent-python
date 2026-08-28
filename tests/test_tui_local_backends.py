@@ -8,7 +8,7 @@ from rich.console import Console
 from textual.app import App
 from textual.widgets import Input, Label, ListView, ProgressBar, Select, Static
 
-from tau_coding.extensions import (
+from pi_coding.extensions import (
     DynamicProvider,
     DynamicProviderRegistry,
     LocalArtifactOption,
@@ -28,8 +28,8 @@ from tau_coding.extensions import (
     OpenAICompatibleTransport,
     ProviderModel,
 )
-from tau_coding.tui.config import TAU_DARK_THEME
-from tau_coding.tui.local_backends import (
+from pi_coding.tui.config import PI_DARK_THEME
+from pi_coding.tui.local_backends import (
     LocalBackendPickerScreen,
     LocalBackendScreen,
     LocalChoiceConfirmScreen,
@@ -112,7 +112,7 @@ async def test_single_backend_is_preselected_but_requires_explicit_confirmation(
 
     async with app.run_test() as pilot:
         app.push_screen(
-            LocalBackendPickerScreen(registry, theme=TAU_DARK_THEME),
+            LocalBackendPickerScreen(registry, theme=PI_DARK_THEME),
             callback=selected.append,
         )
         await pilot.pause()
@@ -164,7 +164,7 @@ async def test_backend_open_auto_refreshes_and_renders_clickable_models() -> Non
     app = _Host()
 
     async with app.run_test() as pilot:
-        app.push_screen(LocalBackendScreen(registry, "backend", theme=TAU_DARK_THEME))
+        app.push_screen(LocalBackendScreen(registry, "backend", theme=PI_DARK_THEME))
         await refreshed.wait()
         await pilot.pause()
 
@@ -229,7 +229,7 @@ async def test_download_progress_renders_fraction_and_remaining_detail() -> None
     app = _Host()
 
     async with app.run_test() as pilot:
-        screen = LocalBackendScreen(registry, "backend", theme=TAU_DARK_THEME)
+        screen = LocalBackendScreen(registry, "backend", theme=PI_DARK_THEME)
         app.push_screen(screen)
         await pilot.pause()
         screen._start_operation(
@@ -288,7 +288,7 @@ async def test_clicking_loaded_model_uses_exact_model_id() -> None:
             LocalBackendScreen(
                 registry,
                 "backend",
-                theme=TAU_DARK_THEME,
+                theme=PI_DARK_THEME,
                 on_use=use,
             )
         )
@@ -317,7 +317,7 @@ async def test_confirmation_preselects_cancel_without_recommending_it() -> None:
     app = _Host()
 
     async with app.run_test() as pilot:
-        app.push_screen(LocalChoiceConfirmScreen(request, theme=TAU_DARK_THEME))
+        app.push_screen(LocalChoiceConfirmScreen(request, theme=PI_DARK_THEME))
         await pilot.pause()
 
         choices = app.screen.query_one("#local-choice-list", ListView)
@@ -348,7 +348,7 @@ async def test_search_results_preselect_recommended_download_variant() -> None:
 
     async with app.run_test() as pilot:
         app.push_screen(
-            LocalSearchResultsScreen(results, theme=TAU_DARK_THEME),
+            LocalSearchResultsScreen(results, theme=PI_DARK_THEME),
             callback=selected.append,
         )
         await pilot.pause()
@@ -373,7 +373,7 @@ async def test_configuration_screen_renders_text_secret_and_choice_fields() -> N
     app = _Host()
 
     async with app.run_test() as pilot:
-        app.push_screen(LocalConfigureScreen(spec, theme=TAU_DARK_THEME))
+        app.push_screen(LocalConfigureScreen(spec, theme=PI_DARK_THEME))
         await pilot.pause()
 
         assert len(tuple(app.screen.query(Input))) == 2
@@ -406,7 +406,7 @@ async def test_closing_download_modal_detaches_and_reopen_offers_explicit_cancel
     app = _Host()
 
     async with app.run_test() as pilot:
-        screen = LocalBackendScreen(registry, "backend", theme=TAU_DARK_THEME)
+        screen = LocalBackendScreen(registry, "backend", theme=PI_DARK_THEME)
         app.push_screen(screen)
         await pilot.pause()
         screen._start_operation(
@@ -425,8 +425,9 @@ async def test_closing_download_modal_detaches_and_reopen_offers_explicit_cancel
         assert worker.done() is False
         assert registry.operation_running("backend", "download_model") is True
 
-        reopened = LocalBackendScreen(registry, "backend", theme=TAU_DARK_THEME)
+        reopened = LocalBackendScreen(registry, "backend", theme=PI_DARK_THEME)
         app.push_screen(reopened)
+        await pilot.pause()
         await pilot.pause()
         labels = [
             item.query_one(Label).render().plain
@@ -489,7 +490,7 @@ async def test_detached_download_completion_immediately_shows_model_available() 
     app = _Host()
 
     async with app.run_test() as pilot:
-        screen = LocalBackendScreen(registry, "backend", theme=TAU_DARK_THEME)
+        screen = LocalBackendScreen(registry, "backend", theme=PI_DARK_THEME)
         app.push_screen(screen)
         await pilot.pause()
         screen._start_operation(
@@ -503,7 +504,7 @@ async def test_detached_download_completion_immediately_shows_model_available() 
         screen.action_cancel()
         await pilot.pause()
 
-        reopened = LocalBackendScreen(registry, "backend", theme=TAU_DARK_THEME)
+        reopened = LocalBackendScreen(registry, "backend", theme=PI_DARK_THEME)
         app.push_screen(reopened)
         await pilot.pause()
         assert (
@@ -563,7 +564,7 @@ async def test_unmount_cancels_backend_work_without_late_updates() -> None:
             cancelled.set()
 
     registry = _registry(refresh=refresh)
-    screen = LocalBackendScreen(registry, "backend", theme=TAU_DARK_THEME)
+    screen = LocalBackendScreen(registry, "backend", theme=PI_DARK_THEME)
     screen._worker = asyncio.create_task(screen._run_operation("refresh", None, None))
 
     await entered.wait()
@@ -588,7 +589,7 @@ async def test_reset_and_use_are_rechecked_after_the_host_becomes_idle() -> None
         screen = LocalBackendScreen(
             registry,
             "backend",
-            theme=TAU_DARK_THEME,
+            theme=PI_DARK_THEME,
             on_use=use,
             is_idle=lambda: idle,
         )

@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from tau_agent import (
+from pi_agent import (
     AgentEndEvent,
     AgentHarness,
     AgentHarnessConfig,
@@ -17,7 +17,7 @@ from tau_agent import (
     ToolExecutionStartEvent,
     ToolResultMessage,
 )
-from tau_agent.provider_events import (
+from pi_agent.provider_events import (
     AssistantDoneEvent,
     AssistantStartEvent,
     TextDeltaEvent,
@@ -26,18 +26,18 @@ from tau_agent.provider_events import (
     ToolCallEndEvent,
     ToolCallStartEvent,
 )
-from tau_ai import FakeProvider
+from pi_ai import FakeProvider
 
 
-def test_tau_agent_does_not_import_tau_ai() -> None:
-    for path in Path("src/tau_agent").rglob("*.py"):
+def test_pi_agent_does_not_import_pi_ai() -> None:
+    for path in Path("src/pi_agent").rglob("*.py"):
         source = path.read_text(encoding="utf-8")
-        assert "from tau_ai" not in source, path
-        assert "import tau_ai" not in source, path
+        assert "from pi_ai" not in source, path
+        assert "import pi_ai" not in source, path
 
 
-def test_tau_ai_reexports_canonical_event_classes() -> None:
-    from tau_ai.events import TextDeltaEvent as public
+def test_pi_ai_reexports_canonical_event_classes() -> None:
+    from pi_ai.events import TextDeltaEvent as public
 
     assert public is TextDeltaEvent
 

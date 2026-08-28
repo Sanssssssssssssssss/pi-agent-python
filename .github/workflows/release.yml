@@ -1,0 +1,46 @@
+name: Release
+
+on:
+  release:
+    types:
+      - published
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  publish:
+    name: Verify and publish
+    runs-on: ubuntu-latest
+    environment: pypi
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v9.0.0
+
+      - name: Build package
+        run: uv build
+
+      - name: Verify release artifacts
+        run: |
+          uv venv .release-wheel
+          uv pip install --python .release-wheel/bin/python dist/*.whl
+          .release-wheel/bin/python -c "import pi_ai, pi_agent, pi_coding"
+          .release-wheel/bin/pi-agent --version
+          .release-wheel/bin/pi-agent --help
+          uv venv .release-sdist
+          uv pip install --python .release-sdist/bin/python dist/*.tar.gz
+          .release-sdist/bin/python -c "import pi_ai, pi_agent, pi_coding"
+          .release-sdist/bin/pi-agent --version
+          .release-sdist/bin/pi-agent --help
+
+      - name: Attach verified artifacts to the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$GITHUB_REF_NAME" dist/* --clobber
+
+      - name: Publish the same artifacts to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1

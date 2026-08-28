@@ -1,6 +1,6 @@
 import pytest
 
-from tau_coding.thinking import (
+from pi_coding.thinking import (
     DEFAULT_THINKING_LEVEL,
     THINKING_LEVELS,
     next_thinking_level,

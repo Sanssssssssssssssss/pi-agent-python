@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-from tau_agent import (
+from pi_agent import (
     AssistantMessage,
     TextContent,
     ThinkingContent,
@@ -12,9 +12,9 @@ from tau_agent import (
     ToolResultMessage,
     UserMessage,
 )
-from tau_ai.anthropic import _build_messages_payload
-from tau_ai.env import CACHE_RETENTION_NONE
-from tau_ai.tool_call_ids import portable_tool_call_id
+from pi_ai.anthropic import _build_messages_payload
+from pi_ai.env import CACHE_RETENTION_NONE
+from pi_ai.tool_call_ids import portable_tool_call_id
 
 
 def test_portable_tool_call_id_preserves_safe_ids_and_hashes_native_ids() -> None:
@@ -62,7 +62,7 @@ def test_anthropic_compiles_codex_tool_history_with_portable_ids() -> None:
 
     payload = _build_messages_payload(
         model="claude-test",
-        system="You are Tau.",
+        system="You are Pi.",
         messages=messages,
         tools=[],
         cache_retention=CACHE_RETENTION_NONE,
@@ -102,7 +102,7 @@ def test_anthropic_replays_foreign_thinking_as_plain_text() -> None:
 
     payload = _build_messages_payload(
         model="claude-test",
-        system="You are Tau.",
+        system="You are Pi.",
         messages=messages,
         tools=[],
         cache_retention=CACHE_RETENTION_NONE,
@@ -130,7 +130,7 @@ def test_anthropic_preserves_native_anthropic_thinking_and_safe_tool_ids() -> No
 
     payload = _build_messages_payload(
         model="claude-test",
-        system="You are Tau.",
+        system="You are Pi.",
         messages=messages,
         tools=[],
         cache_retention=CACHE_RETENTION_NONE,

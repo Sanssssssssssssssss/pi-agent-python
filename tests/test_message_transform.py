@@ -1,6 +1,6 @@
 """Contracts translated from Pi's transform-messages tests."""
 
-from tau_agent import (
+from pi_agent import (
     AssistantMessage,
     TextContent,
     ThinkingContent,
@@ -8,9 +8,9 @@ from tau_agent import (
     ToolResultMessage,
     UserMessage,
 )
-from tau_ai.content import transform_messages
-from tau_ai.openai_codex import _build_codex_payload
-from tau_ai.tool_call_ids import pi_short_hash
+from pi_ai.content import transform_messages
+from pi_ai.openai_codex import _build_codex_payload
+from pi_ai.tool_call_ids import pi_short_hash
 
 
 def _transform(messages):  # noqa: ANN001, ANN202
@@ -21,8 +21,7 @@ def _transform(messages):  # noqa: ANN001, ANN202
         api="anthropic-messages",
         supports_images=True,
         normalize_tool_call_id=lambda value, _source: "".join(
-            character if character.isalnum() or character in "_-" else "_"
-            for character in value
+            character if character.isalnum() or character in "_-" else "_" for character in value
         )[:64],
     )
 
@@ -119,9 +118,7 @@ def test_only_missing_parallel_result_is_synthesized() -> None:
     )
 
     errors = [
-        message
-        for message in result
-        if isinstance(message, ToolResultMessage) and message.is_error
+        message for message in result if isinstance(message, ToolResultMessage) and message.is_error
     ]
     assert [(message.tool_call_id, message.tool_name) for message in errors] == [
         ("call_2_fc_2", "bash")

@@ -1,4 +1,4 @@
-from tau_agent.messages import (
+from pi_agent.messages import (
     AssistantMessage,
     CustomMessage,
     ResponseTiming,
@@ -8,8 +8,8 @@ from tau_agent.messages import (
     Usage,
     UserMessage,
 )
-from tau_agent.session import CompactionEntry, MessageEntry
-from tau_coding.session_stats import SessionStats, calculate_session_stats
+from pi_agent.session import CompactionEntry, MessageEntry
+from pi_coding.session_stats import SessionStats, calculate_session_stats
 
 
 def test_cache_hit_rate_is_hidden_when_no_provider_reported_cache_usage() -> None:

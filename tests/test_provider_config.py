@@ -3,11 +3,11 @@ from pathlib import Path
 
 import pytest
 
-import tau_coding.provider_config as provider_config
-from tau_coding.credentials import FileCredentialStore, OAuthCredential
-from tau_coding.paths import TauPaths
-from tau_coding.provider_catalog import ModelCostTier
-from tau_coding.provider_config import (
+import pi_coding.provider_config as provider_config
+from pi_coding.credentials import FileCredentialStore, OAuthCredential
+from pi_coding.paths import PiPaths
+from pi_coding.provider_catalog import ModelCostTier
+from pi_coding.provider_config import (
     DEFAULT_MODEL,
     AnthropicProviderConfig,
     OpenAICodexProviderConfig,
@@ -33,13 +33,13 @@ from tau_coding.provider_config import (
     set_provider_thinking_level,
     upsert_openai_compatible_provider,
 )
-from tau_coding.thinking import ThinkingLevel
+from pi_coding.thinking import ThinkingLevel
 
 
 def test_stale_preferences_cannot_restore_removed_codex_alias(tmp_path: Path) -> None:
-    tau_home = tmp_path / ".tau"
-    tau_home.mkdir()
-    (tau_home / "providers.json").write_text(
+    pi_home = tmp_path / ".pi-agent"
+    pi_home.mkdir()
+    (pi_home / "providers.json").write_text(
         json.dumps(
             {
                 "schema_version": 2,
@@ -55,7 +55,7 @@ def test_stale_preferences_cannot_restore_removed_codex_alias(tmp_path: Path) ->
         )
     )
 
-    settings = load_provider_settings(TauPaths(home=tau_home))
+    settings = load_provider_settings(PiPaths(home=pi_home))
     codex = settings.get_provider("openai-codex")
 
     assert codex.default_model == "gpt-5.5"
@@ -66,9 +66,9 @@ def test_stale_preferences_cannot_restore_removed_codex_alias(tmp_path: Path) ->
 def test_load_provider_settings_accepts_huggingface_inference_provider_preferences(
     tmp_path: Path,
 ) -> None:
-    tau_home = tmp_path / ".tau"
-    tau_home.mkdir()
-    (tau_home / "providers.json").write_text(
+    pi_home = tmp_path / ".pi-agent"
+    pi_home.mkdir()
+    (pi_home / "providers.json").write_text(
         json.dumps(
             {
                 "schema_version": 2,
@@ -84,14 +84,14 @@ def test_load_provider_settings_accepts_huggingface_inference_provider_preferenc
         )
     )
 
-    provider = load_provider_settings(TauPaths(home=tau_home)).get_provider("huggingface")
+    provider = load_provider_settings(PiPaths(home=pi_home)).get_provider("huggingface")
 
     assert isinstance(provider, OpenAICompatibleProviderConfig)
     assert provider.inference_providers == {"zai-org/GLM-5.2": "deepinfra"}
 
 
 def test_load_provider_settings_missing_file_uses_openai_default(tmp_path: Path) -> None:
-    settings = load_provider_settings(TauPaths(home=tmp_path / ".tau"))
+    settings = load_provider_settings(PiPaths(home=tmp_path / ".pi-agent"))
 
     assert settings.default_provider == "openai"
     assert [provider.name for provider in settings.providers] == [
@@ -234,9 +234,9 @@ def test_builtin_openai_declares_model_scoped_thinking_capabilities() -> None:
 def test_load_provider_settings_accepts_provider_preferences_with_user_catalog(
     tmp_path: Path,
 ) -> None:
-    tau_home = tmp_path / ".tau"
-    tau_home.mkdir()
-    (tau_home / "catalog.toml").write_text(
+    pi_home = tmp_path / ".pi-agent"
+    pi_home.mkdir()
+    (pi_home / "catalog.toml").write_text(
         """
 schema_version = 1
 
@@ -252,7 +252,7 @@ docs_url = "http://localhost:11434/v1"
 """.strip(),
         encoding="utf-8",
     )
-    (tau_home / "providers.json").write_text(
+    (pi_home / "providers.json").write_text(
         json.dumps(
             {
                 "default_provider": "local",
@@ -272,7 +272,7 @@ docs_url = "http://localhost:11434/v1"
         encoding="utf-8",
     )
 
-    settings = load_provider_settings(TauPaths(home=tau_home))
+    settings = load_provider_settings(PiPaths(home=pi_home))
 
     provider = settings.get_provider("local")
     assert settings.default_provider == "local"
@@ -295,7 +295,7 @@ def test_provider_settings_ignore_unknown_fields(tmp_path: Path) -> None:
                 }
             },
         },
-        paths=TauPaths(home=tmp_path / ".tau"),
+        paths=PiPaths(home=tmp_path / ".pi-agent"),
     )
 
     assert settings.default_provider == "openai"
@@ -305,9 +305,9 @@ def test_provider_settings_ignore_unknown_fields(tmp_path: Path) -> None:
 def test_load_provider_settings_ignores_preference_without_catalog_entry(
     tmp_path: Path,
 ) -> None:
-    tau_home = tmp_path / ".tau"
-    tau_home.mkdir()
-    (tau_home / "providers.json").write_text(
+    pi_home = tmp_path / ".pi-agent"
+    pi_home.mkdir()
+    (pi_home / "providers.json").write_text(
         json.dumps(
             {
                 "default_provider": "openai",
@@ -320,16 +320,16 @@ def test_load_provider_settings_ignores_preference_without_catalog_entry(
         encoding="utf-8",
     )
 
-    settings = load_provider_settings(TauPaths(home=tau_home))
+    settings = load_provider_settings(PiPaths(home=pi_home))
 
     assert settings.get_provider("openai").default_model == "gpt-5-mini"
     assert "llama-cpp" not in {provider.name for provider in settings.providers}
 
 
 def test_llama_dot_cpp_and_llama_dash_cpp_are_distinct_provider_ids(tmp_path: Path) -> None:
-    tau_home = tmp_path / ".tau"
-    tau_home.mkdir()
-    (tau_home / "catalog.toml").write_text(
+    pi_home = tmp_path / ".pi-agent"
+    pi_home.mkdir()
+    (pi_home / "catalog.toml").write_text(
         """
 schema_version = 1
 
@@ -356,7 +356,7 @@ docs_url = "https://example.test/legacy-llama-cpp"
         encoding="utf-8",
     )
 
-    settings = load_provider_settings(TauPaths(home=tau_home))
+    settings = load_provider_settings(PiPaths(home=pi_home))
     dotted = resolve_provider_selection(
         settings,
         provider_name="llama.cpp",
@@ -381,7 +381,7 @@ docs_url = "https://example.test/legacy-llama-cpp"
 
 
 def test_save_provider_settings_writes_backup_when_replacing(tmp_path: Path) -> None:
-    paths = TauPaths(home=tmp_path / ".tau")
+    paths = PiPaths(home=tmp_path / ".pi-agent")
     initial = ProviderSettings(
         providers=(
             OpenAICompatibleProviderConfig(
@@ -424,7 +424,7 @@ def test_save_and_load_provider_settings_round_trip(
     # contain only the user-saved providers.
     monkeypatch.setattr(provider_config, "environ", {})
 
-    paths = TauPaths(home=tmp_path / ".tau")
+    paths = PiPaths(home=tmp_path / ".pi-agent")
     settings = ProviderSettings(
         default_provider="local",
         providers=(
@@ -447,7 +447,7 @@ def test_save_and_load_provider_settings_round_trip(
     path = save_provider_settings(settings, paths)
     loaded = load_provider_settings(paths)
 
-    assert path == tmp_path / ".tau" / "providers.json"
+    assert path == tmp_path / ".pi-agent" / "providers.json"
     assert json.loads(path.read_text())["schema_version"] == 2
     assert loaded == settings
 
@@ -1086,7 +1086,7 @@ def test_kimi_k3_maps_thinking_levels_to_reasoning_effort(
     expected_effort: str,
 ) -> None:
     monkeypatch.setenv("KIMI_CODE_API_KEY", "test-key")
-    settings = load_provider_settings(TauPaths(home=Path("/missing")))
+    settings = load_provider_settings(PiPaths(home=Path("/missing")))
     provider = settings.get_provider("kimi-code")
 
     config = openai_compatible_config_from_provider(
@@ -1109,7 +1109,7 @@ def test_huggingface_kimi_k3_maps_thinking_levels_to_reasoning_effort(
     expected_effort: str,
 ) -> None:
     monkeypatch.setenv("HF_TOKEN", "test-key")
-    settings = load_provider_settings(TauPaths(home=Path("/missing")))
+    settings = load_provider_settings(PiPaths(home=Path("/missing")))
     provider = settings.get_provider("huggingface")
 
     config = openai_compatible_config_from_provider(
@@ -1130,7 +1130,7 @@ def test_huggingface_glm_5_2_does_not_send_unverified_medium_effort(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("HF_TOKEN", "test-key")
-    provider = load_provider_settings(TauPaths(home=Path("/missing"))).get_provider("huggingface")
+    provider = load_provider_settings(PiPaths(home=Path("/missing"))).get_provider("huggingface")
 
     startup_level = resolve_startup_thinking_level(provider, "zai-org/GLM-5.2")
     config = openai_compatible_config_from_provider(
@@ -1149,9 +1149,9 @@ def test_huggingface_glm_5_2_does_not_send_unverified_medium_effort(
 
 
 def test_stale_saved_glm_thinking_default_is_ignored(tmp_path: Path) -> None:
-    tau_home = tmp_path / ".tau"
-    tau_home.mkdir()
-    (tau_home / "providers.json").write_text(
+    pi_home = tmp_path / ".pi-agent"
+    pi_home.mkdir()
+    (pi_home / "providers.json").write_text(
         json.dumps(
             {
                 "schema_version": 2,
@@ -1168,7 +1168,7 @@ def test_stale_saved_glm_thinking_default_is_ignored(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    provider = load_provider_settings(TauPaths(home=tau_home)).get_provider("huggingface")
+    provider = load_provider_settings(PiPaths(home=pi_home)).get_provider("huggingface")
 
     assert provider.thinking_defaults == {}
     assert resolve_startup_thinking_level(provider, "zai-org/GLM-5.2") == "off"
@@ -1542,9 +1542,9 @@ def test_provider_settings_from_json_loads_anthropic_thinking_provider() -> None
 def test_load_provider_settings_does_not_restore_stale_codex_builtin_models(
     tmp_path: Path,
 ) -> None:
-    tau_home = tmp_path / ".tau"
-    tau_home.mkdir()
-    (tau_home / "providers.json").write_text(
+    pi_home = tmp_path / ".pi-agent"
+    pi_home.mkdir()
+    (pi_home / "providers.json").write_text(
         """
 {
   "default_provider": "openai-codex",
@@ -1568,7 +1568,7 @@ def test_load_provider_settings_does_not_restore_stale_codex_builtin_models(
         encoding="utf-8",
     )
 
-    settings = load_provider_settings(TauPaths(home=tau_home))
+    settings = load_provider_settings(PiPaths(home=pi_home))
     provider = settings.get_provider("openai-codex")
 
     assert provider.models == (
@@ -1590,17 +1590,17 @@ def test_load_provider_settings_does_not_restore_stale_codex_builtin_models(
         "high",
         "xhigh",
     )
-    migrated = json.loads((tau_home / "providers.json").read_text())
+    migrated = json.loads((pi_home / "providers.json").read_text())
     assert migrated["schema_version"] == 2
     assert "providers" not in migrated
-    assert (tau_home / "providers.json.bak").exists()
-    assert not (tau_home / "catalog.toml").exists()
+    assert (pi_home / "providers.json.bak").exists()
+    assert not (pi_home / "catalog.toml").exists()
 
 
 def test_load_provider_settings_merges_builtin_model_catalog(tmp_path: Path) -> None:
-    tau_home = tmp_path / ".tau"
-    tau_home.mkdir()
-    (tau_home / "providers.json").write_text(
+    pi_home = tmp_path / ".pi-agent"
+    pi_home.mkdir()
+    (pi_home / "providers.json").write_text(
         """
 {
   "default_provider": "huggingface",
@@ -1621,7 +1621,7 @@ def test_load_provider_settings_merges_builtin_model_catalog(tmp_path: Path) -> 
         encoding="utf-8",
     )
 
-    settings = load_provider_settings(TauPaths(home=tau_home))
+    settings = load_provider_settings(PiPaths(home=pi_home))
 
     provider = settings.get_provider("huggingface")
     assert provider.default_model == "MiniMaxAI/MiniMax-M2.7"
@@ -1637,8 +1637,8 @@ def test_load_provider_settings_migrates_custom_provider_to_catalog(
     tmp_path: Path,
 ) -> None:
     monkeypatch.setattr(provider_config, "environ", {})
-    tau_home = tmp_path / ".tau"
-    tau_home.mkdir()
+    pi_home = tmp_path / ".pi-agent"
+    pi_home.mkdir()
     original = {
         "default_provider": "local",
         "providers": [
@@ -1655,18 +1655,18 @@ def test_load_provider_settings_migrates_custom_provider_to_catalog(
             }
         ],
     }
-    (tau_home / "providers.json").write_text(json.dumps(original), encoding="utf-8")
+    (pi_home / "providers.json").write_text(json.dumps(original), encoding="utf-8")
 
-    settings = load_provider_settings(TauPaths(home=tau_home))
+    settings = load_provider_settings(PiPaths(home=pi_home))
 
     provider = settings.get_provider("local")
     assert provider.context_windows == {"qwen": 64_000}
     assert provider.headers == {"X-Test": "yes"}
-    assert json.loads((tau_home / "providers.json.bak").read_text()) == original
-    migrated = json.loads((tau_home / "providers.json").read_text())
+    assert json.loads((pi_home / "providers.json.bak").read_text()) == original
+    migrated = json.loads((pi_home / "providers.json").read_text())
     assert migrated["schema_version"] == 2
     assert migrated["provider_preferences"]["local"]["default_model"] == "qwen"
-    catalog = (tau_home / "catalog.toml").read_text()
+    catalog = (pi_home / "catalog.toml").read_text()
     assert 'name = "local"' in catalog
     assert 'models = ["qwen"]' in catalog
 
@@ -1676,8 +1676,8 @@ def test_legacy_migration_aborts_before_changes_when_backup_fails(
     tmp_path: Path,
 ) -> None:
     monkeypatch.setattr(provider_config, "environ", {})
-    tau_home = tmp_path / ".tau"
-    tau_home.mkdir()
+    pi_home = tmp_path / ".pi-agent"
+    pi_home.mkdir()
     original = {
         "default_provider": "local",
         "providers": [
@@ -1691,7 +1691,7 @@ def test_legacy_migration_aborts_before_changes_when_backup_fails(
             }
         ],
     }
-    settings_path = tau_home / "providers.json"
+    settings_path = pi_home / "providers.json"
     settings_path.write_text(json.dumps(original), encoding="utf-8")
 
     def fail_backup(*_args: object, **_kwargs: object) -> None:
@@ -1700,11 +1700,11 @@ def test_legacy_migration_aborts_before_changes_when_backup_fails(
     monkeypatch.setattr(provider_config, "copy2", fail_backup)
 
     with pytest.raises(PermissionError, match="backup denied"):
-        load_provider_settings(TauPaths(home=tau_home))
+        load_provider_settings(PiPaths(home=pi_home))
 
     assert json.loads(settings_path.read_text()) == original
-    assert not (tau_home / "providers.json.bak").exists()
-    assert not (tau_home / "catalog.toml").exists()
+    assert not (pi_home / "providers.json.bak").exists()
+    assert not (pi_home / "catalog.toml").exists()
 
 
 def test_load_provider_settings_restores_builtin_providers_with_stored_credentials(
@@ -1714,9 +1714,9 @@ def test_load_provider_settings_restores_builtin_providers_with_stored_credentia
     # Isolate from the host environment so built-in provider discovery depends
     # only on the credential store, not on stray env vars (e.g. GEMINI_API_KEY).
     monkeypatch.setattr(provider_config, "environ", {})
-    tau_home = tmp_path / ".tau"
-    tau_home.mkdir()
-    (tau_home / "providers.json").write_text(
+    pi_home = tmp_path / ".pi-agent"
+    pi_home.mkdir()
+    (pi_home / "providers.json").write_text(
         """
 {
   "default_provider": "local",
@@ -1735,7 +1735,7 @@ def test_load_provider_settings_restores_builtin_providers_with_stored_credentia
 """.strip(),
         encoding="utf-8",
     )
-    store = FileCredentialStore(tau_home / "credentials.json")
+    store = FileCredentialStore(pi_home / "credentials.json")
     store.set("openrouter", "stored-openrouter-key")
     store.set_oauth(
         "openai-codex",
@@ -1747,7 +1747,7 @@ def test_load_provider_settings_restores_builtin_providers_with_stored_credentia
         ),
     )
 
-    settings = load_provider_settings(TauPaths(home=tau_home))
+    settings = load_provider_settings(PiPaths(home=pi_home))
 
     # Provider order is an implementation detail of BUILTIN_PROVIDER_CATALOG and
     # shifts when built-ins are added; use set equality (not position) so the
@@ -1767,9 +1767,9 @@ def test_load_provider_settings_restores_builtin_credential_name(
     tmp_path: Path,
 ) -> None:
     monkeypatch.setenv("OPENROUTER_API_KEY", "env-key")
-    tau_home = tmp_path / ".tau"
-    tau_home.mkdir()
-    (tau_home / "providers.json").write_text(
+    pi_home = tmp_path / ".pi-agent"
+    pi_home.mkdir()
+    (pi_home / "providers.json").write_text(
         """
 {
   "default_provider": "openrouter",
@@ -1793,7 +1793,7 @@ def test_load_provider_settings_restores_builtin_credential_name(
         def get(self, name: str) -> str | None:
             return "stored-key" if name == "openrouter" else None
 
-    settings = load_provider_settings(TauPaths(home=tau_home))
+    settings = load_provider_settings(PiPaths(home=pi_home))
     provider = settings.get_provider("openrouter")
 
     assert isinstance(provider, OpenAICompatibleProviderConfig)

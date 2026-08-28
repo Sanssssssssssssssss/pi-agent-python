@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from tau_agent import (
+from pi_agent import (
     AgentEndEvent,
     AgentStartEvent,
     AgentToolResult,
@@ -19,8 +19,8 @@ from tau_agent import (
     ToolResultMessage,
     UserMessage,
 )
-from tau_agent.provider_events import TextDeltaEvent, ThinkingDeltaEvent
-from tau_coding.events import (
+from pi_agent.provider_events import TextDeltaEvent, ThinkingDeltaEvent
+from pi_coding.events import (
     AgentSettledEvent,
     AutoRetryStartEvent,
     CompactionEndEvent,
@@ -28,9 +28,9 @@ from tau_coding.events import (
     QueueUpdateEvent,
     SessionAgentEndEvent,
 )
-from tau_coding.skills import Skill, format_skill_invocation
-from tau_coding.tui import TuiEventAdapter, TuiState
-from tau_coding.tui.state import (
+from pi_coding.skills import Skill, format_skill_invocation
+from pi_coding.tui import TuiEventAdapter, TuiState
+from pi_coding.tui.state import (
     format_tool_call_block,
     format_tool_call_invocation,
     format_tool_result_block,
@@ -112,20 +112,20 @@ def test_tui_adapter_builds_assistant_item_from_nested_stream_events() -> None:
 def test_tui_adapter_builds_user_and_compact_skill_items() -> None:
     skill = Skill(
         name="review",
-        path=Path("/workspace/.tau/skills/review.md"),
+        path=Path("/workspace/.pi-agent/skills/review.md"),
         content="# Review\nFull instructions.",
         description="Review code",
     )
     state = TuiState()
     adapter = TuiEventAdapter(state)
 
-    adapter.apply(MessageEndEvent(message=UserMessage(content="Hello Tau")))
+    adapter.apply(MessageEndEvent(message=UserMessage(content="Hello Pi")))
     adapter.apply(
         MessageEndEvent(message=UserMessage(content=format_skill_invocation(skill, "check auth")))
     )
 
     assert [(item.role, item.text) for item in state.items] == [
-        ("user", "Hello Tau"),
+        ("user", "Hello Pi"),
         ("skill", "Using skill: review"),
         ("user", "check auth"),
     ]
@@ -678,7 +678,7 @@ def test_tui_adapter_records_tool_progress_and_result() -> None:
 def test_tui_adapter_renders_skill_file_reads_with_skill_style() -> None:
     skill = Skill(
         name="review",
-        path=Path("/workspace/.tau/skills/review.md"),
+        path=Path("/workspace/.pi-agent/skills/review.md"),
         content="# Review",
         description="Review code",
     )
@@ -689,7 +689,7 @@ def test_tui_adapter_renders_skill_file_reads_with_skill_style() -> None:
         ToolExecutionStartEvent(
             tool_call_id="call-1",
             tool_name="read",
-            args={"path": "/workspace/.tau/skills/review.md"},
+            args={"path": "/workspace/.pi-agent/skills/review.md"},
         )
     )
     adapter.apply(
@@ -769,7 +769,7 @@ def test_tui_state_restores_partial_assistant_response_and_error() -> None:
 
 
 def test_tool_formatters_keep_human_readable_output() -> None:
-    from tau_agent import ToolCall
+    from pi_agent import ToolCall
 
     assert (
         format_tool_call_block(

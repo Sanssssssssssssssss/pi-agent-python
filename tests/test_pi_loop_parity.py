@@ -5,8 +5,7 @@ from collections.abc import AsyncIterator, Mapping
 
 import pytest
 
-from pi_event_helpers import assistant_done, assistant_error, assistant_start, tool_call_end
-from tau_agent import (
+from pi_agent import (
     AfterToolCallContext,
     AfterToolCallResult,
     AgentContext,
@@ -28,9 +27,10 @@ from tau_agent import (
     Usage,
     UserMessage,
 )
-from tau_agent.loop import run_agent_loop
-from tau_agent.types import JSONValue
-from tau_ai import CancellationToken, FakeProvider
+from pi_agent.loop import run_agent_loop
+from pi_agent.types import JSONValue
+from pi_ai import CancellationToken, FakeProvider
+from pi_event_helpers import assistant_done, assistant_error, assistant_start, tool_call_end
 
 
 async def _collect(stream: AsyncIterator[AgentEvent]) -> list[AgentEvent]:
@@ -179,8 +179,7 @@ async def test_sequential_tool_override_serializes_the_whole_batch() -> None:
         return AgentToolResult(content="ok")
 
     calls = [
-        ToolCall(id=str(index), name=name, arguments={})
-        for index, name in enumerate(("a", "b"))
+        ToolCall(id=str(index), name=name, arguments={}) for index, name in enumerate(("a", "b"))
     ]
     first = AssistantMessage(content=calls, model="fake")
     final = AssistantMessage(content="done", model="fake")
@@ -359,9 +358,7 @@ async def test_sequential_hooks_do_not_see_prior_results_from_the_same_batch() -
     async def execute(*args, **kwargs) -> AgentToolResult:  # noqa: ANN002, ANN003
         return AgentToolResult(content="ok")
 
-    async def before(
-        context: BeforeToolCallContext, signal: CancellationToken | None
-    ) -> None:
+    async def before(context: BeforeToolCallContext, signal: CancellationToken | None) -> None:
         del signal
         seen_roles.append([message.role for message in context.context.messages])
 
@@ -528,7 +525,10 @@ async def test_settled_tool_ignores_late_updates_while_parallel_peer_runs() -> N
     late_update = None
 
     async def settled(
-        tool_call_id, arguments, signal=None, on_update=None  # noqa: ANN001
+        tool_call_id,
+        arguments,
+        signal=None,
+        on_update=None,  # noqa: ANN001
     ) -> AgentToolResult:
         del tool_call_id, arguments, signal
         nonlocal late_update

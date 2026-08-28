@@ -9,8 +9,8 @@ from time import monotonic
 import pytest
 from PIL import Image
 
-from tau_agent import ImageContent
-from tau_coding import (
+from pi_agent import ImageContent
+from pi_coding import (
     ImageSupportState,
     ReadOperations,
     create_bash_tool,
@@ -22,7 +22,7 @@ from tau_coding import (
     create_read_tool_definition,
     create_write_tool,
 )
-from tau_coding.image_processing import DEFAULT_MAX_SOURCE_IMAGE_BYTES
+from pi_coding.image_processing import DEFAULT_MAX_SOURCE_IMAGE_BYTES
 
 requires_posix_shell = pytest.mark.skipif(
     sys.platform == "win32", reason="bash lifecycle assertions require POSIX"
@@ -365,7 +365,7 @@ async def test_edit_tool_requires_unique_matches(tmp_path: Path) -> None:
 async def test_bash_tool_tolerates_missing_required_display_description(tmp_path: Path) -> None:
     tool = create_bash_tool(cwd=tmp_path)
     command = (
-        'powershell -NoProfile -Command "[Console]::Write(\'hello\')"'
+        "powershell -NoProfile -Command \"[Console]::Write('hello')\""
         if sys.platform == "win32"
         else "printf hello"
     )

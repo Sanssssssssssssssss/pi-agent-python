@@ -4,7 +4,7 @@ This repository is derived from `huggingface/tau` commit
 `fc09dc8e0c82cea4642a5b93d3d231ae59787cbf`. Tau's MIT license is preserved
 in `LICENSE`.
 
-Parts of `src/tau_ai`, `src/tau_agent`, and `src/tau_coding` translate runtime,
+Parts of `src/pi_ai`, `src/pi_agent`, and `src/pi_coding` translate runtime,
 provider replay, session, compaction, prompt, and resource-loading semantics
 from `earendil-works/pi` commit
 `534bcbffb7e1e7551d9ee3572dfeb278e203e493`.

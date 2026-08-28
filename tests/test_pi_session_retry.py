@@ -5,13 +5,13 @@ from pathlib import Path
 
 import pytest
 
+from pi_agent import AgentTool, AgentToolResult, AssistantMessage, JsonlSessionStorage, ToolCall
+from pi_agent.types import JSONValue
+from pi_ai import CancellationToken, FakeProvider
+from pi_ai.retry import is_retryable_assistant_error
+from pi_coding import CodingSession, CodingSessionConfig
+from pi_coding.events import AutoRetryEndEvent, AutoRetryStartEvent, CodingSessionEvent
 from pi_event_helpers import assistant_done, assistant_error, assistant_start, tool_call_end
-from tau_agent import AgentTool, AgentToolResult, AssistantMessage, JsonlSessionStorage, ToolCall
-from tau_agent.types import JSONValue
-from tau_ai import CancellationToken, FakeProvider
-from tau_ai.retry import is_retryable_assistant_error
-from tau_coding import CodingSession, CodingSessionConfig
-from tau_coding.events import AutoRetryEndEvent, AutoRetryStartEvent, CodingSessionEvent
 
 
 async def _collect(stream: AsyncIterator[CodingSessionEvent]) -> list[CodingSessionEvent]:

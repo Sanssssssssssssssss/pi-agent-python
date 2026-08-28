@@ -4,19 +4,19 @@ from __future__ import annotations
 
 from typing import Any
 
-from tau_agent import (
+from pi_agent import (
     AssistantMessage,
     ImageContent,
     TextContent,
     ToolResultMessage,
     UserMessage,
 )
-from tau_agent.tools import AgentTool, ToolCall
-from tau_ai.anthropic import (
+from pi_agent.tools import AgentTool, ToolCall
+from pi_ai.anthropic import (
     MAX_CACHE_BREAKPOINTS,
     _build_messages_payload,
 )
-from tau_ai.env import (
+from pi_ai.env import (
     CACHE_RETENTION_LONG,
     CACHE_RETENTION_NONE,
     CACHE_RETENTION_SHORT,
@@ -72,7 +72,7 @@ def _payload(
 ) -> dict[str, Any]:
     return _build_messages_payload(
         model="claude-test",
-        system="You are Tau.",
+        system="You are Pi.",
         oauth_system_prompt=oauth_system_prompt,
         messages=messages,
         tools=tools or [],
@@ -113,7 +113,7 @@ def test_retention_none_leaves_payload_untouched() -> None:
     )
 
     assert _count_breakpoints(payload) == 0
-    assert payload["system"] == "You are Tau."
+    assert payload["system"] == "You are Pi."
     assert payload["messages"] == [{"role": "user", "content": "Say hello"}]
     assert "cache_control" not in payload["tools"][0]
 
@@ -135,7 +135,7 @@ def test_tools_breakpoint_can_be_suppressed_on_its_own() -> None:
     """A gateway may accept cache_control everywhere except inside tool objects."""
     payload = _build_messages_payload(
         model="claude-test",
-        system="You are Tau.",
+        system="You are Pi.",
         messages=[UserMessage(content="Say hello")],
         tools=[_tool("read")],
         cache_control_on_tools=False,
@@ -282,7 +282,7 @@ def test_image_tail_is_marked_on_the_image_block() -> None:
     ]
     payload = _build_messages_payload(
         model="claude-test",
-        system="You are Tau.",
+        system="You are Pi.",
         messages=messages,
         tools=[],
         supports_images=True,

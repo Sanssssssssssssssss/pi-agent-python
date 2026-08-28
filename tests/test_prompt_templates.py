@@ -2,19 +2,19 @@ from pathlib import Path
 
 import pytest
 
-from tau_coding import (
-    TauResourcePaths,
+from pi_coding import (
+    PiResourcePaths,
     expand_prompt_template_command,
     load_prompt_templates,
     load_prompt_templates_with_diagnostics,
     render_prompt_template,
 )
-from tau_coding.prompt_templates import PromptTemplate
-from tau_coding.resources import ResourceError
+from pi_coding.prompt_templates import PromptTemplate
+from pi_coding.resources import ResourceError
 
 
 def test_load_prompt_templates_missing_directory_returns_empty(tmp_path: Path) -> None:
-    assert load_prompt_templates(TauResourcePaths(root=tmp_path, agents_root=None)) == []
+    assert load_prompt_templates(PiResourcePaths(root=tmp_path, agents_root=None)) == []
 
 
 def test_load_prompt_templates_from_markdown_files(tmp_path: Path) -> None:
@@ -25,7 +25,7 @@ def test_load_prompt_templates_from_markdown_files(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    templates = load_prompt_templates(TauResourcePaths(root=tmp_path, agents_root=None))
+    templates = load_prompt_templates(PiResourcePaths(root=tmp_path, agents_root=None))
 
     assert len(templates) == 1
     assert templates[0].name == "review"
@@ -33,7 +33,7 @@ def test_load_prompt_templates_from_markdown_files(tmp_path: Path) -> None:
 
 
 def test_load_prompt_templates_includes_agents_directories(tmp_path: Path) -> None:
-    tau_home = tmp_path / "home" / ".tau"
+    pi_home = tmp_path / "home" / ".pi-agent"
     agents_home = tmp_path / "home" / ".agents"
     cwd = tmp_path / "project"
     (agents_home / "prompts").mkdir(parents=True)
@@ -42,14 +42,14 @@ def test_load_prompt_templates_includes_agents_directories(tmp_path: Path) -> No
     (cwd / ".agents" / "prompts" / "project.md").write_text("Project prompt", encoding="utf-8")
 
     templates = load_prompt_templates(
-        TauResourcePaths(root=tau_home, agents_root=agents_home, cwd=cwd)
+        PiResourcePaths(root=pi_home, agents_root=agents_home, cwd=cwd)
     )
 
     assert [template.name for template in templates] == ["project", "user"]
 
 
 def test_first_prompt_template_wins(tmp_path: Path) -> None:
-    tau_home = tmp_path / "home" / ".tau"
+    pi_home = tmp_path / "home" / ".pi-agent"
     agents_home = tmp_path / "home" / ".agents"
     cwd = tmp_path / "project"
     (agents_home / "prompts").mkdir(parents=True)
@@ -58,7 +58,7 @@ def test_first_prompt_template_wins(tmp_path: Path) -> None:
     (cwd / ".agents" / "prompts" / "review.md").write_text("Project review", encoding="utf-8")
 
     templates = load_prompt_templates(
-        TauResourcePaths(root=tau_home, agents_root=agents_home, cwd=cwd)
+        PiResourcePaths(root=pi_home, agents_root=agents_home, cwd=cwd)
     )
 
     assert len(templates) == 1
@@ -67,23 +67,23 @@ def test_first_prompt_template_wins(tmp_path: Path) -> None:
 
 
 def test_load_prompt_templates_with_diagnostics_reports_overrides(tmp_path: Path) -> None:
-    tau_home = tmp_path / "home" / ".tau"
+    pi_home = tmp_path / "home" / ".pi-agent"
     agents_home = tmp_path / "home" / ".agents"
     cwd = tmp_path / "project"
-    (tau_home / "prompts").mkdir(parents=True)
-    (tau_home / "prompts" / "review.md").write_text("User Tau review", encoding="utf-8")
-    (cwd / ".tau" / "prompts").mkdir(parents=True)
-    (cwd / ".tau" / "prompts" / "review.md").write_text(
-        "Project Tau review",
+    (pi_home / "prompts").mkdir(parents=True)
+    (pi_home / "prompts" / "review.md").write_text("User Pi review", encoding="utf-8")
+    (cwd / ".pi-agent" / "prompts").mkdir(parents=True)
+    (cwd / ".pi-agent" / "prompts" / "review.md").write_text(
+        "Project Pi review",
         encoding="utf-8",
     )
 
     templates, diagnostics = load_prompt_templates_with_diagnostics(
-        TauResourcePaths(root=tau_home, agents_root=agents_home, cwd=cwd)
+        PiResourcePaths(root=pi_home, agents_root=agents_home, cwd=cwd)
     )
 
     assert [template.name for template in templates] == ["review"]
-    assert templates[0].path == tau_home / "prompts" / "review.md"
+    assert templates[0].path == pi_home / "prompts" / "review.md"
     assert len(diagnostics) == 1
     assert diagnostics[0].kind == "prompt"
     assert diagnostics[0].name == "review"
@@ -100,7 +100,7 @@ def test_reserved_picker_template_is_ignored_with_diagnostic(
     reserved_path.write_text("Shadow the picker", encoding="utf-8")
 
     templates, diagnostics = load_prompt_templates_with_diagnostics(
-        TauResourcePaths(root=tmp_path, agents_root=None)
+        PiResourcePaths(root=tmp_path, agents_root=None)
     )
 
     assert templates == []

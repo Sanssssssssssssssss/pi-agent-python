@@ -3,8 +3,7 @@ from collections.abc import AsyncIterator, Mapping
 
 import pytest
 
-from pi_event_helpers import assistant_done, assistant_start, text_delta, tool_call_end
-from tau_agent import (
+from pi_agent import (
     AgentContext,
     AgentHarness,
     AgentHarnessConfig,
@@ -20,8 +19,9 @@ from tau_agent import (
     TurnContext,
     UserMessage,
 )
-from tau_agent.types import JSONValue
-from tau_ai import FakeProvider
+from pi_agent.types import JSONValue
+from pi_ai import FakeProvider
+from pi_event_helpers import assistant_done, assistant_start, text_delta, tool_call_end
 
 
 def _texts(harness: AgentHarness) -> list[tuple[str, str]]:
@@ -35,7 +35,7 @@ async def test_prompt_appends_user_and_assistant_with_pi_lifecycle() -> None:
         AgentHarnessConfig(
             provider=FakeProvider([[assistant_start(), assistant_done(assistant)]]),
             model="fake",
-            system="You are Tau.",
+            system="You are Pi.",
         )
     )
 
@@ -67,7 +67,7 @@ async def test_thrown_provider_failure_emits_full_pi_lifecycle() -> None:
         AgentHarnessConfig(
             provider=RaisingProvider(),  # type: ignore[arg-type]
             model="fake",
-            system="You are Tau.",
+            system="You are Pi.",
         )
     )
 
@@ -191,7 +191,7 @@ async def test_subscribers_receive_nested_message_updates_and_unsubscribe() -> N
         AgentHarnessConfig(
             provider=provider,
             model="fake",
-            system="You are Tau.",
+            system="You are Pi.",
             session_id="session-123",
         )
     )
@@ -219,7 +219,7 @@ async def test_harness_rejects_overlap_and_drains_followups() -> None:
         ]
     )
     harness = AgentHarness(
-        AgentHarnessConfig(provider=provider, model="fake", system="You are Tau.")
+        AgentHarnessConfig(provider=provider, model="fake", system="You are Pi.")
     )
 
     queued = False
@@ -255,7 +255,7 @@ async def test_harness_follow_up_mode_all_drains_messages_together() -> None:
                 ]
             ),
             model="fake",
-            system="You are Tau.",
+            system="You are Pi.",
             follow_up_mode="all",
         )
     )
@@ -284,7 +284,7 @@ async def test_continue_processes_queued_follow_up_after_assistant_tail() -> Non
                 [[assistant_start(), assistant_done(AssistantMessage(content="Processed"))]]
             ),
             model="fake",
-            system="You are Tau.",
+            system="You are Pi.",
         ),
         messages=[UserMessage(content="Initial"), AssistantMessage(content="Initial response")],
     )
@@ -306,7 +306,7 @@ async def test_continue_keeps_one_at_a_time_steering_from_assistant_tail() -> No
                 ]
             ),
             model="fake",
-            system="You are Tau.",
+            system="You are Pi.",
         ),
         messages=[UserMessage(content="Initial"), AssistantMessage(content="Initial response")],
     )
@@ -351,7 +351,7 @@ async def test_harness_passes_canonical_tools_to_loop() -> None:
         ]
     )
     harness = AgentHarness(
-        AgentHarnessConfig(provider=provider, model="fake", system="You are Tau.", tools=[tool])
+        AgentHarnessConfig(provider=provider, model="fake", system="You are Pi.", tools=[tool])
     )
 
     _ = [event async for event in harness.prompt("echo")]
@@ -364,7 +364,7 @@ async def test_harness_passes_canonical_tools_to_loop() -> None:
 
 def test_queue_mutators_return_canonical_snapshots() -> None:
     harness = AgentHarness(
-        AgentHarnessConfig(provider=FakeProvider([]), model="fake", system="You are Tau.")
+        AgentHarnessConfig(provider=FakeProvider([]), model="fake", system="You are Pi.")
     )
 
     harness.steer("First")
@@ -410,7 +410,7 @@ def _blocking_run_harness(tool_started: "asyncio.Event", release: "asyncio.Event
         AgentHarnessConfig(
             provider=provider,
             model="fake",
-            system="You are Tau.",
+            system="You are Pi.",
             tools=[_blocking_tool(tool_started, release)],
         )
     )
@@ -465,7 +465,7 @@ async def test_cancel_interrupts_a_blocked_provider_request() -> None:
         AgentHarnessConfig(
             provider=provider,  # type: ignore[arg-type]
             model="fake",
-            system="You are Tau.",
+            system="You are Pi.",
         )
     )
 
@@ -564,7 +564,7 @@ async def test_listener_error_during_teardown_does_not_mask_cancellation() -> No
 def test_harness_repairs_interrupted_tool_calls() -> None:
     call = ToolCall(id="call-1", name="read", arguments={"path": "README.md"})
     harness = AgentHarness(
-        AgentHarnessConfig(provider=FakeProvider([]), model="fake", system="You are Tau."),
+        AgentHarnessConfig(provider=FakeProvider([]), model="fake", system="You are Pi."),
         messages=[AssistantMessage(content=[TextContent(text="Reading"), call])],
     )
 
@@ -587,7 +587,7 @@ async def test_entry_path_repair_is_pushed_to_listeners() -> None:
                 [[assistant_start(), assistant_done(AssistantMessage(content="Recovered."))]]
             ),
             model="fake",
-            system="You are Tau.",
+            system="You are Pi.",
         ),
         messages=[AssistantMessage(content=[call])],
     )

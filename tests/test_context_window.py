@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from tau_agent import (
+from pi_agent import (
     AssistantMessage,
     TextContent,
     ThinkingContent,
@@ -9,8 +9,8 @@ from tau_agent import (
     Usage,
     UserMessage,
 )
-from tau_agent.messages import assistant_content
-from tau_coding.context_window import (
+from pi_agent.messages import assistant_content
+from pi_coding.context_window import (
     ContextUsageEstimate,
     auto_compaction_threshold_for_context_window,
     build_compaction_summary_prompt,
@@ -21,7 +21,7 @@ from tau_coding.context_window import (
     serialize_messages_for_compaction,
     summarize_messages_for_compaction,
 )
-from tau_coding.tools import create_coding_tools
+from pi_coding.tools import create_coding_tools
 
 
 def test_text_token_estimate_is_deterministic() -> None:
@@ -53,12 +53,12 @@ def test_context_token_estimate_includes_system_messages_and_tools(tmp_path: Pat
     tools = tuple(create_coding_tools(cwd=tmp_path))
 
     estimate = estimate_context_tokens(
-        system="You are Tau.",
+        system="You are Pi.",
         messages=(UserMessage(content="hello"), AssistantMessage(content="hi")),
         tools=tools,
     )
 
-    assert estimate > estimate_text_tokens("You are Tau.hellohi")
+    assert estimate > estimate_text_tokens("You are Pi.hellohi")
 
 
 def test_context_usage_uses_latest_provider_report_and_estimates_only_trailing_messages() -> None:
@@ -118,15 +118,15 @@ def test_context_usage_estimate_reports_breakdown(tmp_path: Path) -> None:
     tools = tuple(create_coding_tools(cwd=tmp_path))
     messages = (UserMessage(content="hello"), AssistantMessage(content="hi"))
 
-    usage = estimate_context_usage(system="You are Tau.", messages=messages, tools=tools)
+    usage = estimate_context_usage(system="You are Pi.", messages=messages, tools=tools)
 
     assert isinstance(usage, ContextUsageEstimate)
     assert usage.message_count == 2
     assert usage.tool_count == len(tools)
-    assert usage.system_tokens == estimate_text_tokens("You are Tau.")
+    assert usage.system_tokens == estimate_text_tokens("You are Pi.")
     assert usage.message_tokens == sum(estimate_message_tokens(message) for message in messages)
     assert usage.total_tokens == usage.system_tokens + usage.message_tokens + usage.tool_tokens
-    assert estimate_context_tokens(system="You are Tau.", messages=messages, tools=tools) == (
+    assert estimate_context_tokens(system="You are Pi.", messages=messages, tools=tools) == (
         usage.total_tokens
     )
 

@@ -5,12 +5,12 @@ from typing import Any
 
 import pytest
 
-from tau_coding.resources import TauResourcePaths
-from tau_coding.tui.config import TuiSettings
-from tau_coding.tui.themes import (
+from pi_coding.resources import PiResourcePaths
+from pi_coding.tui.config import TuiSettings
+from pi_coding.tui.themes import (
     BUILTIN_TUI_THEME_NAMES,
-    TAU_DARK_THEME,
-    TAU_LIGHT_THEME,
+    PI_DARK_THEME,
+    PI_LIGHT_THEME,
     THEME_COLOR_FIELDS,
     TRANSCRIPT_ROLES,
     TuiThemeError,
@@ -220,8 +220,8 @@ def test_parse_theme_rejects_var_values_that_are_not_colors() -> None:
 
 
 def test_transcript_roles_are_shared_with_tui_state() -> None:
-    from tau_coding.tui.state import ChatItemRole
-    from tau_coding.tui.themes import TranscriptRole
+    from pi_coding.tui.state import ChatItemRole
+    from pi_coding.tui.themes import TranscriptRole
 
     assert ChatItemRole is TranscriptRole
 
@@ -244,12 +244,12 @@ def test_parse_theme_rejects_non_object_payload() -> None:
 
 
 def test_builtin_themes_are_loaded_from_packaged_json() -> None:
-    assert BUILTIN_TUI_THEME_NAMES == ("tau-dark", "tau-light", "high-contrast")
-    assert TAU_DARK_THEME.dark is True
-    assert TAU_LIGHT_THEME.dark is False
-    assert get_tui_theme("tau-dark").screen_background == "#000000"
+    assert BUILTIN_TUI_THEME_NAMES == ("pi-dark", "pi-light", "high-contrast")
+    assert PI_DARK_THEME.dark is True
+    assert PI_LIGHT_THEME.dark is False
+    assert get_tui_theme("pi-dark").screen_background == "#000000"
     assert get_tui_theme("high-contrast").prompt_border == "#00ff66"
-    assert get_tui_theme("tau-light").syntax_theme == "ansi_light"
+    assert get_tui_theme("pi-light").syntax_theme == "ansi_light"
 
 
 def test_custom_theme_registry_replaces_and_resolves() -> None:
@@ -265,10 +265,10 @@ def test_custom_theme_registry_replaces_and_resolves() -> None:
         get_tui_theme("midnight")
 
 
-def test_resolved_theme_falls_back_to_tau_dark_for_unknown_names() -> None:
+def test_resolved_theme_falls_back_to_pi_dark_for_unknown_names() -> None:
     settings = TuiSettings(theme="missing-theme")
 
-    assert settings.resolved_theme == TAU_DARK_THEME
+    assert settings.resolved_theme == PI_DARK_THEME
 
 
 def test_resolved_theme_finds_registered_custom_theme() -> None:
@@ -327,12 +327,12 @@ def test_load_custom_themes_skips_invalid_files_with_diagnostics(tmp_path: Path)
 
 def test_load_custom_themes_skips_builtin_shadowing_with_diagnostic(tmp_path: Path) -> None:
     themes_dir = tmp_path / "themes"
-    _write_theme(themes_dir, "tau-dark.json", _theme_data(name="tau-dark"))
+    _write_theme(themes_dir, "pi-dark.json", _theme_data(name="pi-dark"))
 
     themes, diagnostics = load_custom_tui_themes([themes_dir])
 
     assert themes == {}
-    assert any("tau-dark" in diagnostic.message for diagnostic in diagnostics)
+    assert any("pi-dark" in diagnostic.message for diagnostic in diagnostics)
 
 
 def test_load_custom_themes_ignores_missing_dirs_and_non_json(tmp_path: Path) -> None:
@@ -349,8 +349,8 @@ def test_load_custom_themes_ignores_missing_dirs_and_non_json(tmp_path: Path) ->
 def test_tool_result_accents_derive_from_theme() -> None:
     from rich.console import Console
 
-    from tau_coding.tui.state import ChatItem
-    from tau_coding.tui.widgets import render_chat_item
+    from pi_coding.tui.state import ChatItem
+    from pi_coding.tui.widgets import render_chat_item
 
     data = _theme_data(vars={"base": "#1e1e2e"})
     data["colors"]["tool_success_text"] = "#00fa9a"
@@ -388,9 +388,9 @@ def test_tool_result_accents_derive_from_theme() -> None:
 
 
 def test_resource_paths_expose_theme_dirs(tmp_path: Path) -> None:
-    paths = TauResourcePaths(root=tmp_path / ".tau", cwd=tmp_path / "project")
+    paths = PiResourcePaths(root=tmp_path / ".pi-agent", cwd=tmp_path / "project")
 
     assert paths.themes_dirs == (
-        tmp_path / ".tau" / "themes",
-        tmp_path / "project" / ".tau" / "themes",
+        tmp_path / ".pi-agent" / "themes",
+        tmp_path / "project" / ".pi-agent" / "themes",
     )

@@ -3,7 +3,7 @@ from collections.abc import Mapping
 import pytest
 from pydantic import ValidationError
 
-from tau_agent import (
+from pi_agent import (
     AgentTool,
     AgentToolResult,
     AssistantMessage,
@@ -19,8 +19,8 @@ from tau_agent import (
     ToolResultMessage,
     UserMessage,
 )
-from tau_agent.provider_events import TextDeltaEvent
-from tau_agent.types import JSONValue
+from pi_agent.provider_events import TextDeltaEvent
+from pi_agent.types import JSONValue
 
 
 def test_user_message_serializes_with_pi_wire_shape() -> None:

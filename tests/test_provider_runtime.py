@@ -2,10 +2,10 @@ from dataclasses import replace
 
 import pytest
 
-from tau_ai import AnthropicProvider, OpenAICodexProvider, OpenAICompatibleProvider
-from tau_coding import provider_runtime
-from tau_coding.credentials import FileCredentialStore, OAuthCredential
-from tau_coding.provider_config import (
+from pi_ai import AnthropicProvider, OpenAICodexProvider, OpenAICompatibleProvider
+from pi_coding import provider_runtime
+from pi_coding.credentials import FileCredentialStore, OAuthCredential
+from pi_coding.provider_config import (
     AnthropicProviderConfig,
     OpenAICodexProviderConfig,
     OpenAICompatibleProviderConfig,
@@ -14,7 +14,7 @@ from tau_coding.provider_config import (
     provider_config_from_catalog_entry,
     resolve_startup_thinking_level,
 )
-from tau_coding.provider_runtime import OpenAICodexCredentialResolver, create_model_provider
+from pi_coding.provider_runtime import OpenAICodexCredentialResolver, create_model_provider
 
 
 def test_create_model_provider_returns_openai_codex_provider(tmp_path) -> None:
@@ -359,11 +359,11 @@ def test_create_model_provider_coerces_unsupported_startup_thinking_level(
     # Regression: startup used to pass the global default ("medium") straight
     # to create_model_provider, which crashed for models like kimi-code:k3
     # that only support xhigh. Now k3 also supports low and high.
-    monkeypatch.setenv("TAU_TEST_KIMI_CODE_API_KEY", "test-key")
+    monkeypatch.setenv("PI_AGENT_TEST_KIMI_CODE_API_KEY", "test-key")
     store = FileCredentialStore(tmp_path / "credentials.json")
     provider_config = OpenAICompatibleProviderConfig(
         name="kimi-code",
-        api_key_env="TAU_TEST_KIMI_CODE_API_KEY",
+        api_key_env="PI_AGENT_TEST_KIMI_CODE_API_KEY",
         models=("k3",),
         default_model="k3",
         thinking_levels=("low", "medium", "high", "xhigh"),

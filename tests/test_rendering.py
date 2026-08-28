@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from tau_agent import (
+from pi_agent import (
     AgentToolResult,
     AssistantMessage,
     CustomMessage,
@@ -14,9 +14,9 @@ from tau_agent import (
     ToolExecutionStartEvent,
     ToolExecutionUpdateEvent,
 )
-from tau_agent.provider_events import TextDeltaEvent, ThinkingDeltaEvent
-from tau_coding.events import AutoRetryEndEvent, AutoRetryStartEvent, QueueUpdateEvent
-from tau_coding.rendering import FinalTextRenderer, JsonEventRenderer, TranscriptRenderer
+from pi_agent.provider_events import TextDeltaEvent, ThinkingDeltaEvent
+from pi_coding.events import AutoRetryEndEvent, AutoRetryStartEvent, QueueUpdateEvent
+from pi_coding.rendering import FinalTextRenderer, JsonEventRenderer, TranscriptRenderer
 
 
 def _assistant_update(event) -> MessageUpdateEvent:  # noqa: ANN001

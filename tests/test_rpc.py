@@ -8,22 +8,22 @@ from types import SimpleNamespace
 import pytest
 from typer.testing import CliRunner
 
-from pi_event_helpers import assistant_done, assistant_start, text_delta
-from tau_agent import AssistantMessage, Usage, UserMessage
-from tau_agent.session import JsonlSessionStorage, LeafEntry, MessageEntry, ModelChangeEntry
-from tau_ai import FakeProvider
-from tau_coding import (
+from pi_agent import AssistantMessage, Usage, UserMessage
+from pi_agent.session import JsonlSessionStorage, LeafEntry, MessageEntry, ModelChangeEntry
+from pi_ai import FakeProvider
+from pi_coding import (
     CodingSession,
     CodingSessionConfig,
     ModelChoice,
     OpenAICompatibleProviderConfig,
+    PiPaths,
     ProviderSettings,
     SessionManager,
-    TauPaths,
 )
-from tau_coding import cli as cli_module
-from tau_coding.provider_config import ProviderModelMetadata
-from tau_coding.rpc import RpcServer
+from pi_coding import cli as cli_module
+from pi_coding.provider_config import ProviderModelMetadata
+from pi_coding.rpc import RpcServer
+from pi_event_helpers import assistant_done, assistant_start, text_delta
 
 
 async def _session(tmp_path: Path, provider: FakeProvider) -> CodingSession:
@@ -31,7 +31,7 @@ async def _session(tmp_path: Path, provider: FakeProvider) -> CodingSession:
         CodingSessionConfig(
             provider=provider,
             model="fake",
-            system="You are Tau.",
+            system="You are Pi.",
             storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
             cwd=tmp_path,
         )
@@ -107,13 +107,13 @@ async def test_rpc_state_matches_pi_frontend_contract(tmp_path: Path) -> None:
 
 @pytest.mark.anyio
 async def test_rpc_set_session_name_persists_rename(tmp_path: Path) -> None:
-    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    manager = SessionManager(PiPaths(home=tmp_path / ".pi-agent", agents_home=tmp_path / ".agents"))
     record = manager.create_session(cwd=tmp_path, model="fake", title="Old name")
     session = await CodingSession.load(
         CodingSessionConfig(
             provider=FakeProvider([]),
             model="fake",
-            system="You are Tau.",
+            system="You are Pi.",
             storage=JsonlSessionStorage(record.path),
             cwd=tmp_path,
             session_id=record.id,
@@ -162,7 +162,7 @@ async def test_rpc_model_shape_uses_catalog_metadata(
         CodingSessionConfig(
             provider=FakeProvider([]),
             model="vision",
-            system="You are Tau.",
+            system="You are Pi.",
             storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
             cwd=tmp_path,
             provider_name="local",
@@ -223,7 +223,7 @@ async def test_rpc_session_inspection_matches_pi_shapes(tmp_path: Path) -> None:
         CodingSessionConfig(
             provider=FakeProvider([]),
             model="fake",
-            system="You are Tau.",
+            system="You are Pi.",
             storage=storage,
             cwd=tmp_path,
         )
@@ -296,7 +296,7 @@ async def test_rpc_compaction_returns_canonical_summary_and_boundary(tmp_path: P
         CodingSessionConfig(
             provider=provider,
             model="fake",
-            system="You are Tau.",
+            system="You are Pi.",
             storage=storage,
             cwd=tmp_path,
         )
@@ -337,7 +337,7 @@ async def test_rpc_auto_compaction_control_updates_pi_state(tmp_path: Path) -> N
 async def test_rpc_direct_bash_matches_pi_result_shape(tmp_path: Path) -> None:
     session = await _session(tmp_path, FakeProvider([]))
     command = (
-        'powershell -NoProfile -Command "[Console]::Write(\'ok\')"'
+        "powershell -NoProfile -Command \"[Console]::Write('ok')\""
         if sys.platform == "win32"
         else "printf ok"
     )

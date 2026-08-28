@@ -5,9 +5,9 @@ from pathlib import Path
 
 import pytest
 
-from tau_coding import models_dev
-from tau_coding.catalog_loader import builtin_source_catalog
-from tau_coding.models_dev import (
+from pi_coding import models_dev
+from pi_coding.catalog_loader import builtin_source_catalog
+from pi_coding.models_dev import (
     bundled_models_dev_catalog_overlay,
     models_dev_catalog_document,
     models_dev_catalog_overlay,

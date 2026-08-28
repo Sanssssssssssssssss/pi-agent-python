@@ -2,7 +2,7 @@ import base64
 import re
 from pathlib import Path
 
-from tau_agent import (
+from pi_agent import (
     AssistantMessage,
     CompactionEntry,
     LeafEntry,
@@ -14,9 +14,9 @@ from tau_agent import (
     ToolResultMessage,
     UserMessage,
 )
-from tau_agent.messages import Usage, assistant_content
-from tau_coding.session_export import export_session_html, render_session_html
-from tau_coding.tui.themes import TAU_DARK_THEME, TAU_LIGHT_THEME
+from pi_agent.messages import Usage, assistant_content
+from pi_coding.session_export import export_session_html, render_session_html
+from pi_coding.tui.themes import PI_DARK_THEME, PI_LIGHT_THEME
 
 
 def test_render_session_html_preserves_branch_tree() -> None:
@@ -76,7 +76,7 @@ def test_render_session_html_uses_static_document_layout() -> None:
 
     html = render_session_html(entries, title="Layout Export")
 
-    assert '<p class="eyebrow">Tau session export</p>' in html
+    assert '<p class="eyebrow">Pi Agent session export</p>' in html
     assert '<main class="session-shell"' in html
     assert '<aside class="tree-rail">' in html
     assert '<section class="entry-stream" aria-label="Session entries">' in html
@@ -228,7 +228,7 @@ def test_render_session_html_includes_jsonl_download() -> None:
     html = render_session_html(
         entries,
         title="Download Export",
-        source="/home/user/.tau/sessions/abc123.jsonl",
+        source="/home/user/.pi-agent/sessions/abc123.jsonl",
         system_prompt="Private live prompt",
     )
 
@@ -309,7 +309,7 @@ def test_render_session_html_includes_usage_tab() -> None:
     assert 'window.location.hash === "#usage" || window.location.hash === "#cache"' in html
 
 
-def test_render_session_html_uses_tau_theme_palette() -> None:
+def test_render_session_html_uses_pi_theme_palette() -> None:
     entries = [
         MessageEntry(id="root", message=UserMessage(content="Hello")),
         MessageEntry(
@@ -321,12 +321,12 @@ def test_render_session_html_uses_tau_theme_palette() -> None:
 
     html = render_session_html(entries)
 
-    assert f"--accent: {TAU_LIGHT_THEME.accent}" in html
-    assert f"--accent: {TAU_DARK_THEME.accent}" in html
-    assert f"--bg: {TAU_LIGHT_THEME.screen_background}" in html
-    assert f"--bg: {TAU_DARK_THEME.screen_background}" in html
+    assert f"--accent: {PI_LIGHT_THEME.accent}" in html
+    assert f"--accent: {PI_DARK_THEME.accent}" in html
+    assert f"--bg: {PI_LIGHT_THEME.screen_background}" in html
+    assert f"--bg: {PI_DARK_THEME.screen_background}" in html
     assert ":root.theme-dark" in html
     assert 'id="tab-usage"' in html
-    assert "tau-themechange" in html
-    assert f'data-dark="{TAU_DARK_THEME.error}"' in html
-    assert f'data-light="{TAU_LIGHT_THEME.error}"' in html
+    assert "pi-themechange" in html
+    assert f'data-dark="{PI_DARK_THEME.error}"' in html
+    assert f'data-light="{PI_LIGHT_THEME.error}"' in html

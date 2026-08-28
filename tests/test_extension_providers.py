@@ -10,11 +10,11 @@ from typing import cast
 import httpx
 import pytest
 
-from tau_agent import UserMessage
-from tau_ai import OpenAICompatibleProvider
-from tau_coding import TauResourcePaths
-from tau_coding.diagnostics import AgentCallDiagnosticContext, AgentCallDiagnosticLogger
-from tau_coding.extensions import (
+from pi_agent import UserMessage
+from pi_ai import OpenAICompatibleProvider
+from pi_coding import PiResourcePaths
+from pi_coding.diagnostics import AgentCallDiagnosticContext, AgentCallDiagnosticLogger
+from pi_coding.extensions import (
     DynamicProvider,
     DynamicProviderError,
     DynamicProviderRegistry,
@@ -29,17 +29,17 @@ from tau_coding.extensions import (
     ResolvedProviderAuth,
     resolve_provider_auth,
 )
-from tau_coding.extensions.provider_registry import (
+from pi_coding.extensions.provider_registry import (
     _SUPERVISED_DISCOVERY_TASKS,
     MAX_PROVIDER_REFRESH_DIAGNOSTICS,
     PROVIDER_DISCOVERY_CANCELLATION_TIMEOUT_SECONDS,
 )
-from tau_coding.provider_config import (
+from pi_coding.provider_config import (
     OpenAICompatibleProviderConfig,
     ProviderConfigError,
     ProviderModelMetadata,
 )
-from tau_coding.provider_runtime import create_dynamic_model_provider
+from pi_coding.provider_runtime import create_dynamic_model_provider
 
 pytestmark = pytest.mark.anyio
 
@@ -97,7 +97,7 @@ def provider(
 def _provider_extension_body(model_id: str, *, fail_setup: bool = False) -> str:
     failure = "\n    raise RuntimeError('setup exploded')" if fail_setup else ""
     return f"""
-from tau_coding.extensions import (
+from pi_coding.extensions import (
     DynamicProvider,
     NoAuth,
     OpenAICompatibleTransport,
@@ -105,8 +105,8 @@ from tau_coding.extensions import (
 )
 
 
-def setup(tau):
-    tau.register_provider(DynamicProvider(
+def setup(pi):
+    pi.register_provider(DynamicProvider(
         id="local",
         display_name="Local",
         models=(ProviderModel("{model_id}"),),
@@ -1163,7 +1163,7 @@ def _live_discovery_tasks() -> list[asyncio.Task[object]]:
     return [
         task
         for task in asyncio.all_tasks()
-        if not task.done() and task.get_name().startswith("tau-provider-discovery:")
+        if not task.done() and task.get_name().startswith("pi-provider-discovery:")
     ]
 
 
@@ -1223,19 +1223,19 @@ async def test_runtime_close_drains_owned_refresh_and_is_idempotent() -> None:
 
 
 async def test_setup_failure_removes_provider_layers(tmp_path: Path) -> None:
-    paths = TauResourcePaths(
-        root=tmp_path / "tau",
+    paths = PiResourcePaths(
+        root=tmp_path / "pi",
         cwd=tmp_path / "project",
         agents_root=tmp_path / "agents",
     )
     extension = tmp_path / "broken_provider.py"
     extension.write_text(
         """
-from tau_coding.extensions import DynamicProvider, OpenAICompatibleTransport
+from pi_coding.extensions import DynamicProvider, OpenAICompatibleTransport
 
 
-def setup(tau):
-    tau.register_provider(DynamicProvider(
+def setup(pi):
+    pi.register_provider(DynamicProvider(
         id="temporary",
         display_name="Temporary",
         transport=OpenAICompatibleTransport(base_url="http://example.test/v1"),
@@ -1255,8 +1255,8 @@ def setup(tau):
 async def test_same_name_extension_paths_shadow_and_restore_exact_provider_layer(
     tmp_path: Path,
 ) -> None:
-    paths = TauResourcePaths(
-        root=tmp_path / "tau",
+    paths = PiResourcePaths(
+        root=tmp_path / "pi",
         cwd=tmp_path / "project",
         agents_root=tmp_path / "agents",
     )
@@ -1290,8 +1290,8 @@ async def test_same_name_extension_paths_shadow_and_restore_exact_provider_layer
 async def test_same_name_failed_setup_preserves_first_exact_provider_layer(
     tmp_path: Path,
 ) -> None:
-    paths = TauResourcePaths(
-        root=tmp_path / "tau",
+    paths = PiResourcePaths(
+        root=tmp_path / "pi",
         cwd=tmp_path / "project",
         agents_root=tmp_path / "agents",
     )
@@ -1322,8 +1322,8 @@ async def test_same_name_failed_setup_preserves_first_exact_provider_layer(
 async def test_reloading_same_exact_extension_source_keeps_first_registration(
     tmp_path: Path,
 ) -> None:
-    paths = TauResourcePaths(
-        root=tmp_path / "tau",
+    paths = PiResourcePaths(
+        root=tmp_path / "pi",
         cwd=tmp_path / "project",
         agents_root=tmp_path / "agents",
     )
@@ -1354,19 +1354,19 @@ async def test_reloading_same_exact_extension_source_keeps_first_registration(
 async def test_extension_api_registers_provider_and_reload_retires_generation(
     tmp_path: Path,
 ) -> None:
-    paths = TauResourcePaths(
-        root=tmp_path / "tau",
+    paths = PiResourcePaths(
+        root=tmp_path / "pi",
         cwd=tmp_path / "project",
         agents_root=tmp_path / "agents",
     )
     extension = tmp_path / "dynamic_provider.py"
     extension.write_text(
         """
-from tau_coding.extensions import DynamicProvider, OpenAICompatibleTransport
+from pi_coding.extensions import DynamicProvider, OpenAICompatibleTransport
 
 
-def setup(tau):
-    tau.register_provider(DynamicProvider(
+def setup(pi):
+    pi.register_provider(DynamicProvider(
         id="dynamic",
         display_name="Dynamic",
         transport=OpenAICompatibleTransport(base_url="http://example.test/v1"),
@@ -1416,8 +1416,8 @@ async def test_dynamic_provider_operations_never_call_durable_write_paths(
     def reject_write(*args, **kwargs):
         raise AssertionError(f"durable provider write attempted: {args!r} {kwargs!r}")
 
-    monkeypatch.setattr("tau_coding.provider_config._write_provider_settings", reject_write)
-    monkeypatch.setattr("tau_coding.provider_config.save_user_catalog_entries", reject_write)
+    monkeypatch.setattr("pi_coding.provider_config._write_provider_settings", reject_write)
+    monkeypatch.setattr("pi_coding.provider_config.save_user_catalog_entries", reject_write)
 
     async def refresh(context):
         return ProviderModelSnapshot((ProviderModel("fresh"),), "fresh")

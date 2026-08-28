@@ -5,10 +5,10 @@ from textual.app import App
 from textual.geometry import Region
 from textual.widgets import Input, Static
 
-from tau_coding.oauth_types import OAuthAuthInfo, OAuthDeviceCodeInfo, OAuthPrompt
-from tau_coding.provider_catalog import builtin_provider_entry
-from tau_coding.tui.app import OAuthLoginScreen, TauTuiApp
-from tau_coding.tui.config import TAU_DARK_THEME
+from pi_coding.oauth_types import OAuthAuthInfo, OAuthDeviceCodeInfo, OAuthPrompt
+from pi_coding.provider_catalog import builtin_provider_entry
+from pi_coding.tui.app import OAuthLoginScreen, PiTuiApp
+from pi_coding.tui.config import PI_DARK_THEME
 
 LONG_URL = "https://claude.ai/oauth/authorize?" + "&".join(f"p{index}=value" for index in range(40))
 
@@ -22,20 +22,20 @@ def _login_screen(url: str = LONG_URL) -> OAuthLoginScreen:
         callbacks.on_auth(OAuthAuthInfo(url=url, instructions="Complete login in your browser."))
         await asyncio.Event().wait()
 
-    return OAuthLoginScreen(provider, theme=TAU_DARK_THEME, login=fake_login)
+    return OAuthLoginScreen(provider, theme=PI_DARK_THEME, login=fake_login)
 
 
 def _themed_app(screen: OAuthLoginScreen) -> App[None]:
-    """An app carrying Tau's real CSS, so dialog geometry matches production."""
-    from tau_coding.tui.app import _textual_theme_for_tau_theme
+    """An app carrying Pi's real CSS, so dialog geometry matches production."""
+    from pi_coding.tui.app import _textual_theme_for_pi_theme
 
     class TestApp(App[None]):
-        CSS = TauTuiApp.CSS
+        CSS = PiTuiApp.CSS
 
         def __init__(self) -> None:
             super().__init__()
-            self.register_theme(_textual_theme_for_tau_theme(TAU_DARK_THEME.name))
-            self.theme = TAU_DARK_THEME.name
+            self.register_theme(_textual_theme_for_pi_theme(PI_DARK_THEME.name))
+            self.theme = PI_DARK_THEME.name
 
         def on_mount(self) -> None:
             self.push_screen(screen)
@@ -88,7 +88,7 @@ async def test_oauth_device_code_screen_leaves_the_clipboard_alone() -> None:
         )
         await asyncio.Event().wait()
 
-    screen = OAuthLoginScreen(provider, theme=TAU_DARK_THEME, login=fake_login)
+    screen = OAuthLoginScreen(provider, theme=PI_DARK_THEME, login=fake_login)
     copied: list[str] = []
     app = _themed_app(screen)
     app.copy_to_clipboard = copied.append  # type: ignore[method-assign]
@@ -129,7 +129,7 @@ async def test_oauth_screen_fits_a_short_terminal() -> None:
 async def test_oauth_screen_accepts_blank_provider_prompt() -> None:
     provider = builtin_provider_entry("github-copilot")
     assert provider is not None
-    screen = OAuthLoginScreen(provider, theme=TAU_DARK_THEME)
+    screen = OAuthLoginScreen(provider, theme=PI_DARK_THEME)
     screen.compose()
 
     # Exercise the prompt/input handshake inside a minimal Textual app context.

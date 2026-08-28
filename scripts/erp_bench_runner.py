@@ -1,4 +1,4 @@
-"""Run a Tau CodingSession against one task-local Odoo MCP server."""
+"""Run a Pi Agent CodingSession against one task-local Odoo MCP server."""
 
 from __future__ import annotations
 
@@ -9,21 +9,21 @@ import json
 import os
 from pathlib import Path
 
-from tau_agent.mcp import McpToolSet
-from tau_agent.messages import AssistantMessage
-from tau_agent.session import JsonlSessionStorage
-from tau_ai.env import OpenAICompatibleConfig
-from tau_ai.openai_compatible import OpenAICompatibleProvider
-from tau_coding.provider_config import (
+from pi_agent.mcp import McpToolSet
+from pi_agent.messages import AssistantMessage
+from pi_agent.session import JsonlSessionStorage
+from pi_ai.env import OpenAICompatibleConfig
+from pi_ai.openai_compatible import OpenAICompatibleProvider
+from pi_coding.provider_config import (
     OpenAICompatibleProviderConfig,
     ProviderModelMetadata,
     ProviderSettings,
 )
-from tau_coding.session import CodingSession, CodingSessionConfig
-from tau_coding.tools import create_coding_tools
+from pi_coding.session import CodingSession, CodingSessionConfig
+from pi_coding.tools import create_coding_tools
 
-PI_CONTEXT_WINDOW = 128_000
-PI_MAX_OUTPUT_TOKENS = 16_384
+PI_AGENT_CONTEXT_WINDOW = 128_000
+PI_AGENT_MAX_OUTPUT_TOKENS = 16_384
 
 
 def arguments() -> argparse.Namespace:
@@ -33,7 +33,7 @@ def arguments() -> argparse.Namespace:
     parser.add_argument(
         "--session-file",
         type=Path,
-        default=Path("/logs/agent/tau-session.jsonl"),
+        default=Path("/logs/agent/pi-agent-session.jsonl"),
     )
     parser.add_argument("--mcp-url", default="http://127.0.0.1:8000/mcp")
     parser.add_argument("--max-turns", type=int, default=100)
@@ -57,7 +57,7 @@ async def run(args: argparse.Namespace) -> None:
             provider_name="commandcode",
             timeout_seconds=180,
             max_retries=0,
-            max_tokens=PI_MAX_OUTPUT_TOKENS,
+            max_tokens=PI_AGENT_MAX_OUTPUT_TOKENS,
             infer_api_from_model=False,
         )
     )
@@ -71,13 +71,13 @@ async def run(args: argparse.Namespace) -> None:
                 api_key_env="LLM_API_KEY",
                 models=(model,),
                 default_model=model,
-                context_windows={model: PI_CONTEXT_WINDOW},
+                context_windows={model: PI_AGENT_CONTEXT_WINDOW},
                 compat={"supportsReasoningEffort": True},
                 model_metadata={
                     model: ProviderModelMetadata(
                         reasoning=True,
-                        context_window=PI_CONTEXT_WINDOW,
-                        max_tokens=PI_MAX_OUTPUT_TOKENS,
+                        context_window=PI_AGENT_CONTEXT_WINDOW,
+                        max_tokens=PI_AGENT_MAX_OUTPUT_TOKENS,
                     )
                 },
                 timeout_seconds=180,
@@ -96,7 +96,7 @@ async def run(args: argparse.Namespace) -> None:
                     cwd=cwd,
                     tools=tools,
                     max_turns=args.max_turns,
-                    session_id=os.environ.get("TAU_SESSION_ID"),
+                    session_id=os.environ.get("PI_AGENT_SESSION_ID"),
                     provider_name="commandcode",
                     provider_settings=ProviderSettings(providers=(provider_config,)),
                     runtime_provider_config=provider_config,
@@ -105,18 +105,18 @@ async def run(args: argparse.Namespace) -> None:
                     thinking_level="high",
                 )
             )
-            system_prompt_path = args.session_file.with_name("tau-system-prompt.txt")
+            system_prompt_path = args.session_file.with_name("pi-agent-system-prompt.txt")
             system_prompt_path.write_text(session.system_prompt, encoding="utf-8")
             print(
                 json.dumps(
                     {
                         "type": "run_metadata",
-                        "entrant": "tau-mcp-baseline",
+                        "entrant": "pi-agent-mcp-baseline",
                         "model": model,
                         "reasoning": os.environ.get("LLM_THINKING_TYPE", "high"),
                         "mcpToolCount": len(toolset.tools),
                         "toolNames": [tool.name for tool in session.tools],
-                        "maxOutputTokens": PI_MAX_OUTPUT_TOKENS,
+                        "maxOutputTokens": PI_AGENT_MAX_OUTPUT_TOKENS,
                         "maxTurns": args.max_turns,
                         "runtime": "CodingSession",
                         "sessionFile": str(args.session_file),
@@ -128,9 +128,7 @@ async def run(args: argparse.Namespace) -> None:
                 ),
                 flush=True,
             )
-            async for event in session.prompt(
-                args.instruction_file.read_text(encoding="utf-8")
-            ):
+            async for event in session.prompt(args.instruction_file.read_text(encoding="utf-8")):
                 if event.type != "message_update":
                     print(event.model_dump_json(by_alias=True), flush=True)
 

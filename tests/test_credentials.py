@@ -3,7 +3,7 @@ from stat import S_IMODE
 
 import pytest
 
-from tau_coding.credentials import CredentialStoreError, FileCredentialStore, OAuthCredential
+from pi_coding.credentials import CredentialStoreError, FileCredentialStore, OAuthCredential
 
 
 def test_file_credential_store_round_trips_and_sets_private_permissions(tmp_path) -> None:

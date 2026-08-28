@@ -1,8 +1,8 @@
 from pathlib import Path
 
-from tau_agent import AgentTool, AgentToolResult
-from tau_coding import Skill
-from tau_coding.system_prompt import (
+from pi_agent import AgentTool, AgentToolResult
+from pi_coding import Skill
+from pi_coding.system_prompt import (
     BuildSystemPromptOptions,
     ProjectContextFile,
     PromptSection,
@@ -11,7 +11,7 @@ from tau_coding.system_prompt import (
     format_available_tools,
     format_skills_for_prompt,
 )
-from tau_coding.tools import create_coding_tools
+from pi_coding.tools import create_coding_tools
 
 
 async def _unused_executor(
@@ -34,14 +34,14 @@ def test_default_prompt_includes_tools_guidelines_and_cwd(tmp_path: Path) -> Non
         )
     )
 
-    assert "You are an expert coding assistant operating inside Tau" in prompt
+    assert "You are an expert coding assistant operating inside Pi" in prompt
     assert "Available tools:\n- read: Read file contents" in prompt
     assert "- Use bash for file operations like ls, rg, find" in prompt
     assert "- When using bash, include a brief present-participle description" in prompt
     assert "- Use read to examine files instead of cat or sed." in prompt
     assert "- Be concise in your responses" in prompt
     assert "- Show file paths clearly when working with files" in prompt
-    assert "Tau documentation (read only when the user asks about Tau itself" in prompt
+    assert "Pi Agent documentation (read only when the user asks about Pi Agent itself" in prompt
     assert "custom providers or adding built-in providers/models (docs/models.md)" in prompt
     assert "creating or modifying extensions (docs/extensions.md" in prompt
     assert prompt.endswith(f"Current working directory: {tmp_path.as_posix()}")
@@ -81,7 +81,7 @@ def test_custom_prompt_replaces_default_but_keeps_append_context_and_cwd(tmp_pat
 
     assert prompt.startswith("Custom base.\n\nExtra rules.")
     assert "Available tools:" not in prompt
-    assert "Tau documentation" not in prompt
+    assert "Pi documentation" not in prompt
     assert '<project_instructions path="/repo/AGENTS.md">' in prompt
     assert "Follow rules." in prompt
     assert prompt.endswith(f"Current working directory: {tmp_path.as_posix()}")

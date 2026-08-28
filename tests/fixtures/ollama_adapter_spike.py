@@ -12,8 +12,8 @@ from dataclasses import dataclass
 
 import httpx
 
-from tau_agent.harness import SimpleCancellationToken
-from tau_coding.extensions import (
+from pi_agent.harness import SimpleCancellationToken
+from pi_coding.extensions import (
     DynamicProvider,
     LocalBackend,
     LocalBackendStatus,

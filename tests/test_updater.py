@@ -10,8 +10,8 @@ from subprocess import CompletedProcess
 
 import pytest
 
-from tau_coding import updater
-from tau_coding.updater import detect_install_method, update_tau
+from pi_coding import updater
+from pi_coding.updater import detect_install_method, update_pi_agent
 
 
 def _success(command: tuple[str, ...], **kwargs: object) -> CompletedProcess[str]:
@@ -32,7 +32,7 @@ def test_detect_install_method_uses_receipts_before_installer_metadata(tmp_path:
     assert detect_install_method(tmp_path, installer="pip") == "pipx"
 
 
-def test_update_tau_uses_uv_tool_for_uv_owned_tool_environment(tmp_path: Path) -> None:
+def test_update_pi_agent_uses_uv_tool_for_uv_owned_tool_environment(tmp_path: Path) -> None:
     (tmp_path / "uv-receipt.toml").touch()
     calls: list[tuple[str, ...]] = []
 
@@ -40,7 +40,7 @@ def test_update_tau_uses_uv_tool_for_uv_owned_tool_environment(tmp_path: Path) -
         calls.append(command)
         return _success(command, **kwargs)
 
-    result = update_tau(
+    result = update_pi_agent(
         runner=runner,
         environment_prefix=tmp_path,
         inspect_distribution=False,
@@ -49,11 +49,11 @@ def test_update_tau_uses_uv_tool_for_uv_owned_tool_environment(tmp_path: Path) -
     )
 
     assert result.succeeded is True
-    assert result.command == ("uv", "tool", "install", "tau-ai@0.2.4")
-    assert calls == [("uv", "tool", "install", "tau-ai@0.2.4")]
+    assert result.command == ("uv", "tool", "install", "pi-agent-python@0.2.4")
+    assert calls == [("uv", "tool", "install", "pi-agent-python@0.2.4")]
 
 
-def test_update_tau_hands_windows_uv_tool_update_to_waiting_process(tmp_path: Path) -> None:
+def test_update_pi_agent_hands_windows_uv_tool_update_to_waiting_process(tmp_path: Path) -> None:
     (tmp_path / "uv-receipt.toml").touch()
     handoff_dir = tmp_path / "handoff"
     launches: list[tuple[tuple[str, ...], dict[str, object]]] = []
@@ -64,9 +64,9 @@ def test_update_tau_hands_windows_uv_tool_update_to_waiting_process(tmp_path: Pa
 
     def runner(*args: object, **kwargs: object) -> CompletedProcess[str]:
         del args, kwargs
-        raise AssertionError("uv must not run in the live Tau process")
+        raise AssertionError("uv must not run in the live Pi process")
 
-    result = update_tau(
+    result = update_pi_agent(
         runner=runner,
         environment_prefix=tmp_path,
         inspect_distribution=False,
@@ -82,7 +82,7 @@ def test_update_tau_hands_windows_uv_tool_update_to_waiting_process(tmp_path: Pa
 
     assert result.succeeded is True
     assert result.deferred is True
-    assert result.command == ("uv", "tool", "install", "tau-ai@0.2.4")
+    assert result.command == ("uv", "tool", "install", "pi-agent-python@0.2.4")
     assert "scheduled" in result.stdout
     assert str(handoff_dir / "update.log") in result.stdout
     assert len(launches) == 1
@@ -97,9 +97,9 @@ def test_update_tau_hands_windows_uv_tool_update_to_waiting_process(tmp_path: Pa
     )
     assert json.loads(base64.b64decode(detached_command[-1])) == {
         "executable": "uv",
-        "arguments": '"tool" "install" "tau-ai@0.2.4"',
+        "arguments": '"tool" "install" "pi-agent-python@0.2.4"',
     }
-    assert options["creationflags"] == 0x00000208
+    assert options["creationflags"] == 0x08000200
     script = (handoff_dir / "update.ps1").read_text(encoding="utf-8")
     assert "Wait-Process -InputObject $ParentProcess -ErrorAction Stop" in script
     assert "NoProcessFoundForGivenId" in script
@@ -154,7 +154,7 @@ def test_windows_handoff_reports_staging_write_failure_and_removes_owned_directo
     monkeypatch.setattr(Path, "write_text", fail_script_write)
 
     result = updater._handoff_windows_update(
-        ("uv", "tool", "install", "tau-ai@1.0"),
+        ("uv", "tool", "install", "pi-agent-python@1.0"),
         launcher=lambda *args, **kwargs: object(),
         executable_finder=lambda name: "powershell.exe",
         parent_pid=4242,
@@ -176,7 +176,7 @@ def test_windows_handoff_reports_launch_failure_and_preserves_caller_directory(
         raise OSError("process creation denied")
 
     result = updater._handoff_windows_update(
-        ("uv", "tool", "install", "tau-ai@1.0"),
+        ("uv", "tool", "install", "pi-agent-python@1.0"),
         launcher=fail_launch,
         executable_finder=lambda name: "powershell.exe",
         parent_pid=4242,
@@ -336,13 +336,13 @@ def test_windows_helper_wait_failure_is_fail_closed(tmp_path: Path, powershell: 
 
     assert completed.returncode != 0
     assert not marker.exists()
-    assert "Could not wait for Tau process" in log_path.read_text(encoding="utf-8-sig")
+    assert "Could not wait for Pi process" in log_path.read_text(encoding="utf-8-sig")
 
 
-def test_update_tau_reports_uv_latest_version_lookup_failure(tmp_path: Path) -> None:
+def test_update_pi_agent_reports_uv_latest_version_lookup_failure(tmp_path: Path) -> None:
     (tmp_path / "uv-receipt.toml").touch()
 
-    result = update_tau(
+    result = update_pi_agent(
         runner=_success,
         environment_prefix=tmp_path,
         inspect_distribution=False,
@@ -350,23 +350,23 @@ def test_update_tau_reports_uv_latest_version_lookup_failure(tmp_path: Path) -> 
     )
 
     assert result.succeeded is False
-    assert result.failures == ("Could not determine the latest Tau version from PyPI.",)
+    assert result.failures == ("Could not determine the latest Pi version from PyPI.",)
 
 
-def test_update_tau_uses_pipx_for_pipx_owned_environment(tmp_path: Path) -> None:
+def test_update_pi_agent_uses_pipx_for_pipx_owned_environment(tmp_path: Path) -> None:
     (tmp_path / "pipx_metadata.json").touch()
 
-    result = update_tau(
+    result = update_pi_agent(
         runner=_success,
         environment_prefix=tmp_path,
         inspect_distribution=False,
     )
 
-    assert result.command == ("pipx", "upgrade", "tau-ai")
+    assert result.command == ("pipx", "upgrade", "pi-agent-python")
 
 
-def test_update_tau_reuses_uv_pip_for_uv_installed_distribution(tmp_path: Path) -> None:
-    result = update_tau(
+def test_update_pi_agent_reuses_uv_pip_for_uv_installed_distribution(tmp_path: Path) -> None:
+    result = update_pi_agent(
         runner=_success,
         python_executable="/env/bin/python",
         environment_prefix=tmp_path,
@@ -381,12 +381,12 @@ def test_update_tau_reuses_uv_pip_for_uv_installed_distribution(tmp_path: Path) 
         "--python",
         "/env/bin/python",
         "--upgrade",
-        "tau-ai",
+        "pi-agent-python",
     )
 
 
-def test_update_tau_uses_current_environment_pip_for_pip_install(tmp_path: Path) -> None:
-    result = update_tau(
+def test_update_pi_agent_uses_current_environment_pip_for_pip_install(tmp_path: Path) -> None:
+    result = update_pi_agent(
         runner=_success,
         python_executable="/env/bin/python",
         environment_prefix=tmp_path,
@@ -400,11 +400,11 @@ def test_update_tau_uses_current_environment_pip_for_pip_install(tmp_path: Path)
         "pip",
         "install",
         "--upgrade",
-        "tau-ai",
+        "pi-agent-python",
     )
 
 
-def test_update_tau_does_not_fall_back_when_owner_update_fails(tmp_path: Path) -> None:
+def test_update_pi_agent_does_not_fall_back_when_owner_update_fails(tmp_path: Path) -> None:
     (tmp_path / "uv-receipt.toml").touch()
     calls: list[tuple[str, ...]] = []
 
@@ -413,35 +413,36 @@ def test_update_tau_does_not_fall_back_when_owner_update_fails(tmp_path: Path) -
         calls.append(command)
         return CompletedProcess(command, 2, stdout="", stderr="uv failed")
 
-    result = update_tau(
+    result = update_pi_agent(
         runner=runner,
         environment_prefix=tmp_path,
         inspect_distribution=False,
         latest_version_fetcher=lambda: "0.2.4",
+        platform_name="linux",
     )
 
     assert result.succeeded is False
-    assert result.failures == ("uv tool install tau-ai@0.2.4: uv failed",)
-    assert calls == [("uv", "tool", "install", "tau-ai@0.2.4")]
+    assert result.failures == ("uv tool install pi-agent-python@0.2.4: uv failed",)
+    assert calls == [("uv", "tool", "install", "pi-agent-python@0.2.4")]
 
 
-def test_update_tau_refuses_direct_url_install(tmp_path: Path) -> None:
-    result = update_tau(
+def test_update_pi_agent_refuses_direct_url_install(tmp_path: Path) -> None:
+    result = update_pi_agent(
         runner=_success,
         environment_prefix=tmp_path,
-        direct_url="file:///checkout/tau",
+        direct_url="file:///checkout/pi",
         installer="uv",
         inspect_distribution=False,
     )
 
     assert result.succeeded is False
-    assert "original source: file:///checkout/tau" in result.failures[0]
+    assert "original source: file:///checkout/pi" in result.failures[0]
 
 
-def test_update_tau_refuses_conda_or_pixi_environment(tmp_path: Path) -> None:
+def test_update_pi_agent_refuses_conda_or_pixi_environment(tmp_path: Path) -> None:
     (tmp_path / "conda-meta").mkdir()
 
-    result = update_tau(
+    result = update_pi_agent(
         runner=_success,
         environment_prefix=tmp_path,
         inspect_distribution=False,
@@ -451,8 +452,8 @@ def test_update_tau_refuses_conda_or_pixi_environment(tmp_path: Path) -> None:
     assert "Conda/Pixi-managed" in result.failures[0]
 
 
-def test_update_tau_refuses_unknown_installer(tmp_path: Path) -> None:
-    result = update_tau(
+def test_update_pi_agent_refuses_unknown_installer(tmp_path: Path) -> None:
+    result = update_pi_agent(
         runner=_success,
         environment_prefix=tmp_path,
         installer="custom-manager",

@@ -1,4 +1,4 @@
-from tau_agent import (
+from pi_agent import (
     AssistantMessage,
     BranchSummaryEntry,
     CompactionEntry,
@@ -8,8 +8,8 @@ from tau_agent import (
     ToolCall,
     UserMessage,
 )
-from tau_agent.messages import Usage, UsageCost, assistant_content
-from tau_coding.session_usage import USAGE_SCRIPT, collect_session_usage, render_usage_dashboard
+from pi_agent.messages import Usage, UsageCost, assistant_content
+from pi_coding.session_usage import USAGE_SCRIPT, collect_session_usage, render_usage_dashboard
 
 
 def _assistant(

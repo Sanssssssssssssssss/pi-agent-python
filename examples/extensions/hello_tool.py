@@ -1,13 +1,13 @@
-"""Minimal Tau extension: one custom tool.
+"""Minimal Pi extension: one custom tool.
 
-Install by copying into `~/.tau/extensions/`, or run:
+Install by copying into `~/.pi-agent/extensions/`, or run:
 
-    tau -e examples/extensions/hello_tool.py
+    pi-agent -e examples/extensions/hello_tool.py
 """
 
-from tau_agent.messages import TextContent
-from tau_agent.tools import AgentTool, AgentToolResult
-from tau_coding.extensions import ExtensionAPI
+from pi_agent.messages import TextContent
+from pi_agent.tools import AgentTool, AgentToolResult
+from pi_coding.extensions import ExtensionAPI
 
 
 async def _run_hello(tool_call_id, arguments, signal=None, on_update=None):  # noqa: ANN001, ANN202
@@ -16,9 +16,9 @@ async def _run_hello(tool_call_id, arguments, signal=None, on_update=None):  # n
     return AgentToolResult(content=[TextContent(text=f"Hello, {who}!")])
 
 
-def setup(tau: ExtensionAPI) -> None:
+def setup(pi: ExtensionAPI) -> None:
     """Register the hello tool."""
-    tau.register_tool(
+    pi.register_tool(
         AgentTool(
             name="hello",
             label="hello",

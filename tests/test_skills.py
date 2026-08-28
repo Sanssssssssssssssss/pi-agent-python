@@ -2,9 +2,9 @@
 
 from pathlib import Path
 
-from tau_coding import (
+from pi_coding import (
+    PiResourcePaths,
     Skill,
-    TauResourcePaths,
     build_skill_index,
     expand_skill_command,
     format_skill_invocation,
@@ -36,7 +36,7 @@ def _write_skill(
 
 
 def _load(root: Path):  # noqa: ANN202
-    return load_skills_with_diagnostics(TauResourcePaths(root=root, agents_root=None))
+    return load_skills_with_diagnostics(PiResourcePaths(root=root, agents_root=None))
 
 
 def test_loads_valid_skill_and_uses_parent_name(tmp_path: Path) -> None:
@@ -187,7 +187,7 @@ def test_disable_model_invocation_uses_yaml_boolean_only(tmp_path: Path) -> None
         extra="disable-model-invocation: yes",
     )
 
-    skills = load_skills(TauResourcePaths(root=tmp_path, agents_root=None))
+    skills = load_skills(PiResourcePaths(root=tmp_path, agents_root=None))
     by_name = {skill.name: skill for skill in skills}
 
     assert by_name["hidden"].disable_model_invocation is True
@@ -195,13 +195,13 @@ def test_disable_model_invocation_uses_yaml_boolean_only(tmp_path: Path) -> None
 
 
 def test_name_collision_keeps_first_skill(tmp_path: Path) -> None:
-    tau_home = tmp_path / "home" / ".tau"
+    pi_home = tmp_path / "home" / ".pi-agent"
     agents_home = tmp_path / "home" / ".agents"
-    first = _write_skill(tau_home / "skills" / "first" / "SKILL.md", name="review")
+    first = _write_skill(pi_home / "skills" / "first" / "SKILL.md", name="review")
     second = _write_skill(agents_home / "skills" / "second" / "SKILL.md", name="review")
 
     skills, diagnostics = load_skills_with_diagnostics(
-        TauResourcePaths(root=tau_home, agents_root=agents_home)
+        PiResourcePaths(root=pi_home, agents_root=agents_home)
     )
 
     assert [(skill.name, skill.path) for skill in skills] == [("review", first)]
@@ -217,7 +217,7 @@ def test_explicit_invocation_rereads_skill_file(tmp_path: Path) -> None:
         name="testing",
         body="# Testing\nRun pytest.",
     )
-    skills = load_skills(TauResourcePaths(root=tmp_path, agents_root=None))
+    skills = load_skills(PiResourcePaths(root=tmp_path, agents_root=None))
     path.write_text(
         "---\nname: testing\ndescription: A test skill.\n---\n# Testing\nRun updated tests.",
         encoding="utf-8",

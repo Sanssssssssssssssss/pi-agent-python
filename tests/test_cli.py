@@ -6,32 +6,32 @@ import pytest
 from typer.testing import CliRunner
 
 from conftest import isolate_home
-from pi_event_helpers import assistant_done, assistant_error, assistant_start, text_delta
-from tau_agent import AssistantMessage, UserMessage
-from tau_agent.session import JsonlSessionStorage, MessageEntry, ModelChangeEntry
-from tau_ai import (
+from pi_agent import AssistantMessage, UserMessage
+from pi_agent.session import JsonlSessionStorage, MessageEntry, ModelChangeEntry
+from pi_ai import (
     FakeProvider,
 )
-from tau_coding import CodingSessionRecord, SessionManager, cli
-from tau_coding.cli import app, run_print_mode
-from tau_coding.paths import TauPaths
-from tau_coding.provider_config import (
+from pi_coding import CodingSessionRecord, SessionManager, cli
+from pi_coding.cli import app, run_print_mode
+from pi_coding.paths import PiPaths
+from pi_coding.provider_config import (
     OpenAICompatibleProviderConfig,
     ProviderSettings,
     load_provider_settings,
 )
-from tau_coding.rendering import PrintOutputMode
-from tau_coding.resources import TauResourcePaths
-from tau_coding.skills import load_skills
-from tau_coding.system_prompt import BuildSystemPromptOptions, build_system_prompt
-from tau_coding.tools import create_coding_tools
-from tau_coding.update_check import (
+from pi_coding.rendering import PrintOutputMode
+from pi_coding.resources import PiResourcePaths
+from pi_coding.skills import load_skills
+from pi_coding.system_prompt import BuildSystemPromptOptions, build_system_prompt
+from pi_coding.tools import create_coding_tools
+from pi_coding.update_check import (
     ReleaseNoteSection,
     ReleaseNotesEntry,
     ReleaseNotesNotice,
     UpdateNotice,
 )
-from tau_coding.updater import UpdateResult
+from pi_coding.updater import UpdateResult
+from pi_event_helpers import assistant_done, assistant_error, assistant_start, text_delta
 
 _ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 
@@ -110,7 +110,7 @@ def test_version_command(monkeypatch: pytest.MonkeyPatch) -> None:
     result = CliRunner().invoke(app, ["--version"])
 
     assert result.exit_code == 0
-    assert result.stdout.strip() == "tau 1.2.3"
+    assert result.stdout.strip() == "pi-agent 1.2.3"
 
 
 def test_help_lists_system_prompt_options() -> None:
@@ -120,14 +120,14 @@ def test_help_lists_system_prompt_options() -> None:
     assert result.exit_code == 0
     assert "--system-promptTEXT_OR_PATH" in output
     assert "--append-system-promptTEXT_OR_PATH" in output
-    assert "tauinstallSOURCE[--force]" in output
+    assert "pi-agentinstallSOURCE[--force]" in output
 
 
 def test_install_command_installs_extension(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     calls: list[tuple[str, bool]] = []
-    destination = tmp_path / ".tau" / "extensions" / "demo"
+    destination = tmp_path / ".pi-agent" / "extensions" / "demo"
 
     def fake_install(source: str, *, force: bool = False) -> Path:
         calls.append((source, force))
@@ -163,7 +163,7 @@ def test_install_command_requires_exactly_one_source() -> None:
     result = CliRunner().invoke(app, ["install"])
 
     assert result.exit_code == 2
-    assert "Usage: tau install <source> [--force]" in _panel_text(result.output)
+    assert "Usage: pi-agent install <source> [--force]" in _panel_text(result.output)
 
 
 def test_prompt_inputs_resolve_files_literals_and_append_order(tmp_path: Path) -> None:
@@ -183,8 +183,8 @@ def test_prompt_inputs_resolve_files_literals_and_append_order(tmp_path: Path) -
 @pytest.mark.parametrize(
     ("option", "expected_base", "expected_append"),
     [
-        ("--system-prompt", "~unknown-tau-user/base.md", None),
-        ("--append-system-prompt", None, "~unknown-tau-user/append.md"),
+        ("--system-prompt", "~unknown-pi-user/base.md", None),
+        ("--append-system-prompt", None, "~unknown-pi-user/append.md"),
     ],
 )
 def test_unknown_user_prompt_path_is_forwarded_as_literal(
@@ -199,7 +199,7 @@ def test_unknown_user_prompt_path_is_forwarded_as_literal(
     original_expanduser = Path.expanduser
 
     def fail_for_unknown_user(path: Path) -> Path:
-        if str(path).startswith("~unknown-tau-user/"):
+        if str(path).startswith("~unknown-pi-user/"):
             raise RuntimeError("Could not determine home directory")
         return original_expanduser(path)
 
@@ -357,7 +357,7 @@ def test_version_command_does_not_check_for_updates(monkeypatch: pytest.MonkeyPa
     result = CliRunner().invoke(app, ["--version"])
 
     assert result.exit_code == 0
-    assert result.stdout.strip() == "tau 1.2.3"
+    assert result.stdout.strip() == "pi-agent 1.2.3"
 
 
 def test_update_command_upgrades_without_startup_check(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -368,18 +368,18 @@ def test_update_command_upgrades_without_startup_check(monkeypatch: pytest.Monke
     )
     monkeypatch.setattr(
         cli,
-        "update_tau",
+        "update_pi_agent",
         lambda: UpdateResult(
-            command=("uv", "tool", "install", "tau-ai@0.2.4"),
-            stdout="Updated tau-ai",
+            command=("uv", "tool", "install", "pi-agent-python@0.2.4"),
+            stdout="Updated pi-agent-python",
         ),
     )
 
     result = CliRunner().invoke(app, ["update"])
 
     assert result.exit_code == 0
-    assert "Updated tau-ai" in result.stdout
-    assert "Tau update completed with: uv tool install tau-ai@0.2.4" in result.stdout
+    assert "Updated pi-agent-python" in result.stdout
+    assert "Pi Agent update completed with: uv tool install pi-agent-python@0.2.4" in result.stdout
 
 
 def test_update_models_force_refreshes_catalog(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -408,10 +408,10 @@ def test_update_command_reports_windows_handoff_without_claiming_completion(
 ) -> None:
     monkeypatch.setattr(
         cli,
-        "update_tau",
+        "update_pi_agent",
         lambda: UpdateResult(
-            command=("uv", "tool", "install", "tau-ai@0.2.4"),
-            stdout="Tau update is scheduled and will start after this process exits.",
+            command=("uv", "tool", "install", "pi-agent-python@0.2.4"),
+            stdout="Pi update is scheduled and will start after this process exits.",
             deferred=True,
         ),
     )
@@ -420,21 +420,21 @@ def test_update_command_reports_windows_handoff_without_claiming_completion(
 
     assert result.exit_code == 0
     assert "scheduled" in result.stdout
-    assert "Tau update handed off with:" in result.stdout
-    assert "Tau update completed" not in result.stdout
+    assert "Pi Agent update handed off with:" in result.stdout
+    assert "Pi update completed" not in result.stdout
 
 
 def test_update_command_reports_installer_failures(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         cli,
-        "update_tau",
+        "update_pi_agent",
         lambda: UpdateResult(command=None, failures=("uv: not found", "pipx: not found")),
     )
 
     result = CliRunner().invoke(app, ["update"])
 
     assert result.exit_code == 1
-    assert "Could not safely update Tau" in result.stderr
+    assert "Could not safely update Pi Agent" in result.stderr
     assert "uv: not found" in result.stderr
 
 
@@ -460,7 +460,7 @@ def test_print_mode_writes_update_notice_to_stderr(monkeypatch: pytest.MonkeyPat
     result = CliRunner().invoke(app, ["-p", "hello"])
 
     assert result.exit_code == 0
-    assert "Tau 0.2.0 is available (installed: 0.1.0)" in result.stderr
+    assert "Pi 0.2.0 is available (installed: 0.1.0)" in result.stderr
 
 
 def test_json_print_mode_suppresses_update_notice(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -555,7 +555,7 @@ def test_cli_prints_resume_hint_after_tui_exit(
     result = CliRunner().invoke(app, [])
 
     assert result.exit_code == 0
-    assert result.stdout == "To resume this session: tau --session session-123\n"
+    assert result.stdout == "To resume this session: pi-agent --session session-123\n"
 
 
 def test_cli_suppresses_resume_hint_without_persisted_session(
@@ -657,8 +657,8 @@ async def test_run_openai_tui_combines_release_notes_and_update_notice(
 
     assert calls == [
         (
-            "Tau 0.1.3 is available (installed: 0.1.2). Run `tau update` to upgrade.",
-            ("Tau updated to 0.1.2\n\n**New**\n- Release note",),
+            "Pi 0.1.3 is available (installed: 0.1.2). Run `pi-agent update` to upgrade.",
+            ("Pi updated to 0.1.2\n\n**New**\n- Release note",),
             "Custom base",
             "Custom append",
         )
@@ -685,7 +685,7 @@ async def test_run_print_mode_prints_final_assistant_text(
         model="fake",
         cwd=tmp_path,
         provider=provider,
-        resource_paths=TauResourcePaths(root=tmp_path / "resources", agents_root=None),
+        resource_paths=PiResourcePaths(root=tmp_path / "resources", agents_root=None),
     )
 
     captured = capsys.readouterr()
@@ -693,7 +693,7 @@ async def test_run_print_mode_prints_final_assistant_text(
     assert captured.out == "Hello\n"
     assert captured.err == ""
     assert provider.calls[0][0] == "fake"
-    resource_paths = TauResourcePaths(root=tmp_path / "resources", agents_root=None)
+    resource_paths = PiResourcePaths(root=tmp_path / "resources", agents_root=None)
     assert provider.calls[0][1] == build_system_prompt(
         BuildSystemPromptOptions(
             cwd=tmp_path,
@@ -701,7 +701,7 @@ async def test_run_print_mode_prints_final_assistant_text(
             skills=load_skills(resource_paths),
         )
     )
-    assert [tool.name for tool in provider.calls[0][3]] == ["read", "write", "edit", "bash"]
+    assert [tool.name for tool in provider.calls[0][3]] == ["read", "bash", "edit", "write"]
 
 
 @pytest.mark.anyio
@@ -725,7 +725,7 @@ async def test_run_print_mode_uses_custom_and_appended_system_prompt(
         model="fake",
         cwd=tmp_path,
         provider=provider,
-        resource_paths=TauResourcePaths(root=resource_root, agents_root=None),
+        resource_paths=PiResourcePaths(root=resource_root, agents_root=None),
         custom_system_prompt="Custom base.",
         append_system_prompt="First append.\n\nSecond append.",
         trust_default="always",
@@ -735,7 +735,7 @@ async def test_run_print_mode_uses_custom_and_appended_system_prompt(
     system = provider.calls[0][1]
     assert ok is True
     assert system.startswith("Custom base.\n\nFirst append.\n\nSecond append.")
-    assert "You are an expert coding assistant operating inside Tau" not in system
+    assert "You are an expert coding assistant operating inside Pi" not in system
     assert "Follow project rules." in system
     assert "<available_skills>" in system
     assert "Current date:" not in system
@@ -755,7 +755,7 @@ async def test_run_print_mode_system_command_prints_prompt_without_provider_call
         cwd=tmp_path,
         provider=provider,
         storage=storage,
-        resource_paths=TauResourcePaths(root=tmp_path / "resources", agents_root=None),
+        resource_paths=PiResourcePaths(root=tmp_path / "resources", agents_root=None),
     )
 
     captured = capsys.readouterr()
@@ -763,7 +763,7 @@ async def test_run_print_mode_system_command_prints_prompt_without_provider_call
         BuildSystemPromptOptions(
             cwd=tmp_path,
             tools=create_coding_tools(cwd=tmp_path),
-            skills=load_skills(TauResourcePaths(root=tmp_path / "resources", agents_root=None)),
+            skills=load_skills(PiResourcePaths(root=tmp_path / "resources", agents_root=None)),
         )
     )
     assert ok is True
@@ -813,7 +813,7 @@ async def test_run_print_mode_includes_discovered_context(
         model="fake",
         cwd=tmp_path,
         provider=provider,
-        resource_paths=TauResourcePaths(root=tmp_path / "resources", agents_root=None),
+        resource_paths=PiResourcePaths(root=tmp_path / "resources", agents_root=None),
         trust_default="always",
     )
 
@@ -901,7 +901,7 @@ async def test_run_print_mode_terminal_command_adds_context(
     storage = JsonlSessionStorage(tmp_path / "print-session.jsonl")
     provider = FakeProvider([])
     command = (
-        'powershell -NoProfile -Command "[Console]::Write(\'hello\')"'
+        "powershell -NoProfile -Command \"[Console]::Write('hello')\""
         if sys.platform == "win32"
         else "printf hello"
     )
@@ -934,7 +934,7 @@ async def test_run_print_mode_terminal_command_can_skip_context(
     storage = JsonlSessionStorage(tmp_path / "print-session.jsonl")
     provider = FakeProvider([])
     command = (
-        'powershell -NoProfile -Command "[Console]::Write(\'hidden\')"'
+        "powershell -NoProfile -Command \"[Console]::Write('hidden')\""
         if sys.platform == "win32"
         else "printf hidden"
     )
@@ -982,7 +982,7 @@ async def test_run_print_mode_expands_skill_commands(
         model="fake",
         cwd=tmp_path,
         provider=provider,
-        resource_paths=TauResourcePaths(root=resource_root, agents_root=None),
+        resource_paths=PiResourcePaths(root=resource_root, agents_root=None),
     )
 
     _captured = capsys.readouterr()
@@ -1192,7 +1192,7 @@ def test_session_id_is_print_mode_only() -> None:
 
 
 def test_print_session_record_resumes_existing_session(tmp_path: Path) -> None:
-    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    manager = SessionManager(PiPaths(home=tmp_path / ".pi-agent", agents_home=tmp_path / ".agents"))
     record = manager.create_session(
         cwd=tmp_path,
         model="fake",
@@ -1213,7 +1213,7 @@ def test_print_session_record_resumes_existing_session(tmp_path: Path) -> None:
 
 
 def test_print_session_record_rejects_unknown_session(tmp_path: Path) -> None:
-    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    manager = SessionManager(PiPaths(home=tmp_path / ".pi-agent", agents_home=tmp_path / ".agents"))
 
     with pytest.raises(ValueError, match="Unknown session: missing"):
         cli._print_session_record(
@@ -1250,7 +1250,7 @@ async def test_print_resume_does_not_apply_hf_route_to_explicit_non_hf_provider(
             ),
         ),
     )
-    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    manager = SessionManager(PiPaths(home=tmp_path / ".pi-agent", agents_home=tmp_path / ".agents"))
     manager.create_session(
         cwd=tmp_path,
         model=model,
@@ -1310,7 +1310,7 @@ async def test_print_resume_does_not_apply_hf_route_to_explicit_non_hf_provider(
 
 
 def test_create_print_session_uses_requested_id_and_rejects_collision(tmp_path: Path) -> None:
-    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    manager = SessionManager(PiPaths(home=tmp_path / ".pi-agent", agents_home=tmp_path / ".agents"))
 
     record = cli._create_print_session(
         manager,
@@ -1487,7 +1487,7 @@ def test_print_mode_requires_a_prompt() -> None:
     result = CliRunner().invoke(app, ["-p"])
 
     assert result.exit_code != 0
-    assert "Usage: tau --print" in _strip_ansi(result.output)
+    assert "Usage: pi-agent --print" in _strip_ansi(result.output)
 
 
 def test_print_mode_merges_piped_stdin_into_prompt(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1573,7 +1573,7 @@ def test_version_short_flag_prints_version() -> None:
     result = CliRunner().invoke(app, ["-v"])
 
     assert result.exit_code == 0
-    assert result.stdout.startswith("tau ")
+    assert result.stdout.startswith("pi-agent ")
 
 
 def _constrained_provider_settings() -> ProviderSettings:
@@ -1601,7 +1601,7 @@ def test_panel_text_strips_ansi_and_borders() -> None:
     the local CliRunner's rendering mode. See issue #265.
     """
     ci_style = (
-        "\x1b[33mUsage: \x1b[0mtau [OPTIONS] ...\n"
+        "\x1b[33mUsage: \x1b[0mpi-agent [OPTIONS] ...\n"
         "\x1b[31m╭─\x1b[0m\x1b[31m Error \x1b[0m\x1b[31m─╮\x1b[0m\n"
         "\x1b[31m│\x1b[0m Invalid value: Model is not configured for provider local: "
         "llama. Available \x1b[31m│\x1b[0m\n"
@@ -1617,14 +1617,14 @@ def test_panel_text_strips_ansi_and_borders() -> None:
 def test_tui_surfaces_bad_model_as_clean_error(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Regression: ``tau --model <bad>`` must exit with a clean error, not a traceback.
+    """Regression: ``pi-agent --model <bad>`` must exit with a clean error, not a traceback.
 
-    See https://github.com/huggingface/tau/issues/265. The TUI startup path
+    See https://github.com/huggingface/pi/issues/265. The TUI startup path
     previously only caught ``RuntimeError``, so a ``ProviderConfigError`` (a
     ``ValueError`` subclass) raised while resolving the provider/model selection
     escaped the ``anyio`` event loop as an unhandled traceback.
     """
-    import tau_coding.tui.app as tui_app
+    import pi_coding.tui.app as tui_app
 
     settings = _constrained_provider_settings()
 
@@ -1653,7 +1653,7 @@ def test_print_mode_surfaces_bad_model_as_clean_error(
     likewise only caught ``RuntimeError``, so it also dumped a
     ``ProviderConfigError`` traceback instead of a friendly message.
     """
-    import tau_coding.tui.app as tui_app
+    import pi_coding.tui.app as tui_app
 
     settings = _constrained_provider_settings()
 
@@ -1712,7 +1712,7 @@ def test_sessions_command_handles_empty_index(monkeypatch: pytest.MonkeyPatch) -
 
 @pytest.mark.anyio
 async def test_export_session_command_writes_html_for_indexed_session(tmp_path: Path) -> None:
-    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    manager = SessionManager(PiPaths(home=tmp_path / ".pi-agent", agents_home=tmp_path / ".agents"))
     record = manager.create_session(
         cwd=tmp_path,
         model="fake",
@@ -1755,14 +1755,14 @@ async def test_export_session_command_writes_html_for_jsonl_path(tmp_path: Path)
 
     html = output_path.read_text(encoding="utf-8")
     assert output_path == tmp_path / "session.html"
-    assert "<title>Tau session session</title>" in html
+    assert "<title>Pi Agent session session</title>" in html
     assert "Path export" in html
     assert '<details class="system-prompt">' not in html
 
 
 @pytest.mark.anyio
 async def test_export_session_command_writes_jsonl_format_to_cwd(tmp_path: Path) -> None:
-    session_path = tmp_path / ".tau" / "sessions" / "session.jsonl"
+    session_path = tmp_path / ".pi-agent" / "sessions" / "session.jsonl"
     cwd = Path.cwd()
     await JsonlSessionStorage(session_path).append(
         MessageEntry(id="root", message=UserMessage(content="JSONL export"))
@@ -1927,7 +1927,7 @@ def test_setup_command_writes_provider_settings(
         ],
     )
 
-    settings = load_provider_settings(TauPaths(home=tmp_path / ".tau"))
+    settings = load_provider_settings(PiPaths(home=tmp_path / ".pi-agent"))
     provider = settings.get_provider("local")
     assert result.exit_code == 0
     assert "Saved provider 'local'" in result.stdout
@@ -1961,7 +1961,7 @@ def test_setup_command_warns_when_api_key_env_is_missing(
     )
 
     assert result.exit_code == 0
-    assert "Set MISSING_API_KEY before running Tau with this provider." in result.stderr
+    assert "Set MISSING_API_KEY before running Pi Agent with this provider." in result.stderr
 
 
 @pytest.mark.parametrize("output", [PrintOutputMode.json, PrintOutputMode.transcript])
@@ -1980,7 +1980,7 @@ async def test_headless_ask_declines_without_corrupting_structured_stdout(
         cwd=tmp_path,
         provider=provider,
         output=output,
-        resource_paths=TauResourcePaths(root=tmp_path / "home/.tau", agents_root=None),
+        resource_paths=PiResourcePaths(root=tmp_path / "home/.pi-agent", agents_root=None),
     )
 
     captured = capsys.readouterr()

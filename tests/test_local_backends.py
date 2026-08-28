@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from tau_coding.extensions import (
+from pi_coding.extensions import (
     DynamicProvider,
     DynamicProviderRegistry,
     LocalBackend,
@@ -428,7 +428,7 @@ async def test_optional_capabilities_return_structured_unavailable_results() -> 
 
 
 async def test_confirmation_request_round_trips_through_the_host() -> None:
-    from tau_coding.extensions import LocalConfirmationChoice, LocalConfirmationRequest
+    from pi_coding.extensions import LocalConfirmationChoice, LocalConfirmationRequest
 
     providers = DynamicProviderRegistry(generation_id="generation")
     registry = LocalBackendRegistry(providers, generation_id="generation")
@@ -494,7 +494,7 @@ async def test_confirmation_request_round_trips_through_the_host() -> None:
 
 
 async def test_confirmation_request_is_validated() -> None:
-    from tau_coding.extensions import LocalConfirmationChoice, LocalConfirmationRequest
+    from pi_coding.extensions import LocalConfirmationChoice, LocalConfirmationRequest
 
     with pytest.raises(LocalBackendError, match="committed operation"):
         LocalOperationResult(

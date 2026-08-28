@@ -7,7 +7,7 @@ import asyncio
 import json
 from pathlib import Path
 
-from tau_agent import McpToolSet
+from pi_agent import McpToolSet
 
 
 async def probe(url: str) -> dict[str, object]:

@@ -5,12 +5,12 @@ from threading import Barrier
 
 import pytest
 
-from tau_coding.paths import TauPaths
-from tau_coding.session_manager import CodingSessionRecord, SessionManager
+from pi_coding.paths import PiPaths
+from pi_coding.session_manager import CodingSessionRecord, SessionManager
 
 
 def test_session_manager_creates_and_lists_sessions(tmp_path: Path) -> None:
-    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    manager = SessionManager(PiPaths(home=tmp_path / ".pi-agent", agents_home=tmp_path / ".agents"))
     cwd = tmp_path / "project"
     cwd.mkdir()
 
@@ -25,11 +25,11 @@ def test_session_manager_creates_and_lists_sessions(tmp_path: Path) -> None:
     assert record.provider_name == "huggingface"
     assert record.inference_provider == "deepinfra"
     assert record.inference_provider_mode == "fixed"
-    assert record.path.parent.parent == tmp_path / ".tau" / "sessions"
+    assert record.path.parent.parent == tmp_path / ".pi-agent" / "sessions"
     assert "project-" in record.path.parent.name
     assert len(record.path.parent.name.rsplit("-", maxsplit=1)[-1]) == 6
     assert (record.path.parent / "index.jsonl").exists()
-    assert not (tmp_path / ".tau" / "sessions" / "index.jsonl").exists()
+    assert not (tmp_path / ".pi-agent" / "sessions" / "index.jsonl").exists()
     assert record.path.name == f"{record.id}.jsonl"
     assert manager.get_session(record.id) == record
     assert manager.list_sessions() == [record]
@@ -40,7 +40,7 @@ def test_session_manager_creates_and_lists_sessions(tmp_path: Path) -> None:
 def test_session_manager_round_trips_unicode_line_separator_in_title(
     tmp_path: Path, separator: str
 ) -> None:
-    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    manager = SessionManager(PiPaths(home=tmp_path / ".pi-agent", agents_home=tmp_path / ".agents"))
     cwd = tmp_path / "project"
     cwd.mkdir()
 
@@ -52,7 +52,7 @@ def test_session_manager_round_trips_unicode_line_separator_in_title(
 
 @pytest.mark.parametrize("session_id", ["", "-bad", "bad-", "bad id", "../escape"])
 def test_session_manager_rejects_invalid_custom_session_id(tmp_path: Path, session_id: str) -> None:
-    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    manager = SessionManager(PiPaths(home=tmp_path / ".pi-agent", agents_home=tmp_path / ".agents"))
 
     with pytest.raises(ValueError, match="Session id must be non-empty"):
         manager.prepare_session(cwd=tmp_path, model="fake", session_id=session_id)
@@ -60,14 +60,14 @@ def test_session_manager_rejects_invalid_custom_session_id(tmp_path: Path, sessi
 
 @pytest.mark.parametrize("session_id", ["default", "Default", "index", "INDEX"])
 def test_session_manager_rejects_reserved_transcript_names(tmp_path: Path, session_id: str) -> None:
-    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    manager = SessionManager(PiPaths(home=tmp_path / ".pi-agent", agents_home=tmp_path / ".agents"))
 
     with pytest.raises(ValueError, match=f"Session id is reserved: {session_id}"):
         manager.prepare_session(cwd=tmp_path, model="fake", session_id=session_id)
 
 
 def test_session_manager_rejects_dynamic_default_session_id(tmp_path: Path) -> None:
-    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    manager = SessionManager(PiPaths(home=tmp_path / ".pi-agent", agents_home=tmp_path / ".agents"))
     default_id = f"default-{manager.paths.project_session_dir(tmp_path).name}"
 
     with pytest.raises(ValueError, match=f"Session id is reserved: {default_id}"):
@@ -76,21 +76,21 @@ def test_session_manager_rejects_dynamic_default_session_id(tmp_path: Path) -> N
 
 @pytest.mark.parametrize("session_id", ["CON", "nul.txt", "LPT9.worker"])
 def test_session_manager_rejects_nonportable_file_names(tmp_path: Path, session_id: str) -> None:
-    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    manager = SessionManager(PiPaths(home=tmp_path / ".pi-agent", agents_home=tmp_path / ".agents"))
 
     with pytest.raises(ValueError, match=f"Session id is not a portable file name: {session_id}"):
         manager.prepare_session(cwd=tmp_path, model="fake", session_id=session_id)
 
 
 def test_session_manager_rejects_overlong_session_id(tmp_path: Path) -> None:
-    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    manager = SessionManager(PiPaths(home=tmp_path / ".pi-agent", agents_home=tmp_path / ".agents"))
 
     with pytest.raises(ValueError, match="Session id must be at most 128 bytes"):
         manager.prepare_session(cwd=tmp_path, model="fake", session_id="a" * 129)
 
 
 def test_session_manager_exclusive_creation_rejects_orphaned_transcript(tmp_path: Path) -> None:
-    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    manager = SessionManager(PiPaths(home=tmp_path / ".pi-agent", agents_home=tmp_path / ".agents"))
     orphan = manager.prepare_session(cwd=tmp_path, model="fake", session_id="orphan")
     orphan.path.write_text("existing transcript\n", encoding="utf-8")
 
@@ -102,7 +102,7 @@ def test_session_manager_exclusive_creation_rejects_orphaned_transcript(tmp_path
 
 
 def test_session_manager_exclusive_creation_is_atomic(tmp_path: Path) -> None:
-    paths = TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents")
+    paths = PiPaths(home=tmp_path / ".pi-agent", agents_home=tmp_path / ".agents")
     barrier = Barrier(2)
 
     def create() -> str:
@@ -134,7 +134,7 @@ def test_session_manager_exclusive_creation_is_atomic(tmp_path: Path) -> None:
 def test_session_manager_exclusive_creation_rolls_back_reservation(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    manager = SessionManager(PiPaths(home=tmp_path / ".pi-agent", agents_home=tmp_path / ".agents"))
     record = manager.prepare_session(cwd=tmp_path, model="fake", session_id="rollback-worker")
 
     index_session = manager.index_session
@@ -157,7 +157,7 @@ def test_session_manager_exclusive_creation_rolls_back_reservation(
 
 
 def test_session_manager_prepares_unindexed_session(tmp_path: Path) -> None:
-    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    manager = SessionManager(PiPaths(home=tmp_path / ".pi-agent", agents_home=tmp_path / ".agents"))
     cwd = tmp_path / "project"
     cwd.mkdir()
 
@@ -176,7 +176,7 @@ def test_session_manager_prepares_unindexed_session(tmp_path: Path) -> None:
 
 
 def test_session_manager_filters_sessions_by_project_cwd(tmp_path: Path) -> None:
-    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    manager = SessionManager(PiPaths(home=tmp_path / ".pi-agent", agents_home=tmp_path / ".agents"))
     first_cwd = tmp_path / "first"
     second_cwd = tmp_path / "second"
     first_cwd.mkdir()
@@ -191,7 +191,7 @@ def test_session_manager_filters_sessions_by_project_cwd(tmp_path: Path) -> None
 
 
 def test_session_manager_returns_latest_session_for_cwd(tmp_path: Path) -> None:
-    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    manager = SessionManager(PiPaths(home=tmp_path / ".pi-agent", agents_home=tmp_path / ".agents"))
     cwd = tmp_path / "project"
     cwd.mkdir()
     older = manager.create_session(cwd=cwd, model="older", session_id="older")
@@ -207,7 +207,7 @@ def test_session_manager_returns_latest_session_for_cwd(tmp_path: Path) -> None:
 
 
 def test_session_manager_ignores_extra_index_metadata(tmp_path: Path) -> None:
-    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    manager = SessionManager(PiPaths(home=tmp_path / ".pi-agent", agents_home=tmp_path / ".agents"))
     cwd = tmp_path / "project"
     cwd.mkdir()
     index_path = manager.project_index_path(cwd)
@@ -238,7 +238,7 @@ def test_session_manager_ignores_extra_index_metadata(tmp_path: Path) -> None:
 
 
 def test_session_manager_treats_legacy_pinned_routes_as_fixed(tmp_path: Path) -> None:
-    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    manager = SessionManager(PiPaths(home=tmp_path / ".pi-agent", agents_home=tmp_path / ".agents"))
     cwd = tmp_path / "project"
     cwd.mkdir()
     index_path = manager.project_index_path(cwd)
@@ -267,7 +267,7 @@ def test_session_manager_treats_legacy_pinned_routes_as_fixed(tmp_path: Path) ->
 
 
 def test_session_manager_gets_or_creates_default_session(tmp_path: Path) -> None:
-    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    manager = SessionManager(PiPaths(home=tmp_path / ".pi-agent", agents_home=tmp_path / ".agents"))
     cwd = tmp_path / "project"
     cwd.mkdir()
 
@@ -284,7 +284,7 @@ def test_session_manager_gets_or_creates_default_session(tmp_path: Path) -> None
 
 
 def test_session_manager_touch_updates_metadata(tmp_path: Path) -> None:
-    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    manager = SessionManager(PiPaths(home=tmp_path / ".pi-agent", agents_home=tmp_path / ".agents"))
     cwd = tmp_path / "project"
     cwd.mkdir()
     record = manager.create_session(cwd=cwd, model="fake")
@@ -306,7 +306,7 @@ def test_session_manager_touch_updates_metadata(tmp_path: Path) -> None:
 
 
 def test_session_manager_sorts_newest_updated_first(tmp_path: Path) -> None:
-    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    manager = SessionManager(PiPaths(home=tmp_path / ".pi-agent", agents_home=tmp_path / ".agents"))
     cwd = tmp_path / "project"
     cwd.mkdir()
     older = manager.create_session(cwd=cwd, model="fake", session_id="older")

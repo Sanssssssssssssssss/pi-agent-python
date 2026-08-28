@@ -14,13 +14,13 @@ from textual.containers import Vertical
 from textual.widgets import Label, ListItem, ListView, Static
 from typer.testing import CliRunner
 
-from tau_agent.provider import ModelProvider
-from tau_agent.session import SessionEntry
-from tau_coding import SessionManager, jsonl_session_storage
-from tau_coding import project_trust as project_trust_module
-from tau_coding.cli import app
-from tau_coding.paths import TauPaths
-from tau_coding.project_trust import (
+from pi_agent.provider import ModelProvider
+from pi_agent.session import SessionEntry
+from pi_coding import SessionManager, jsonl_session_storage
+from pi_coding import project_trust as project_trust_module
+from pi_coding.cli import app
+from pi_coding.paths import PiPaths
+from pi_coding.project_trust import (
     ExtensionTrustResult,
     ProjectTrustCoordinator,
     ProjectTrustError,
@@ -30,18 +30,18 @@ from tau_coding.project_trust import (
     canonicalize_project_path,
     format_trust_diagnostic,
 )
-from tau_coding.resources import (
-    TauResourcePaths,
+from pi_coding.resources import (
+    PiResourcePaths,
     resource_paths_with_cwd,
     resource_paths_with_project_trust,
 )
-from tau_coding.session import CodingSession, CodingSessionConfig
-from tau_coding.tui.project_trust import ProjectTrustScreen, _ProjectTrustApp
-from tau_coding.tui.themes import TAU_DARK_THEME
+from pi_coding.session import CodingSession, CodingSessionConfig
+from pi_coding.tui.project_trust import ProjectTrustScreen, _ProjectTrustApp
+from pi_coding.tui.themes import PI_DARK_THEME
 
 
-def _paths(tmp_path: Path) -> TauPaths:
-    return TauPaths(home=tmp_path / "home" / ".tau", agents_home=tmp_path / "home" / ".agents")
+def _paths(tmp_path: Path) -> PiPaths:
+    return PiPaths(home=tmp_path / "home" / ".pi-agent", agents_home=tmp_path / "home" / ".agents")
 
 
 def test_canonical_project_path_requires_existing_directory_and_resolves_alias(
@@ -88,20 +88,20 @@ def test_detector_covers_protected_matrix_without_reading_contents(tmp_path: Pat
     project = tmp_path / "project"
     project.mkdir()
     candidates = (
-        project / ".tau/settings.json",
-        project / ".tau/skills/tau/SKILL.md",
+        project / ".pi-agent/settings.json",
+        project / ".pi-agent/skills/pi/SKILL.md",
         project / ".agents/skills/agents/SKILL.md",
-        project / ".tau/prompts/tau.md",
+        project / ".pi-agent/prompts/pi.md",
         project / ".agents/prompts/agents.md",
-        project / ".tau/themes/theme.json",
-        project / ".tau/SYSTEM.md",
-        project / ".tau/APPEND_SYSTEM.md",
+        project / ".pi-agent/themes/theme.json",
+        project / ".pi-agent/SYSTEM.md",
+        project / ".pi-agent/APPEND_SYSTEM.md",
         project / "AGENTS.md",
-        project / ".tau/AGENTS.md",
+        project / ".pi-agent/AGENTS.md",
         project / ".agents/AGENTS.md",
-        project / ".tau/extensions/simple.py",
-        project / ".tau/extensions/package/extension.py",
-        project / ".tau/extensions/manifest/pyproject.toml",
+        project / ".pi-agent/extensions/simple.py",
+        project / ".pi-agent/extensions/package/extension.py",
+        project / ".pi-agent/extensions/manifest/pyproject.toml",
     )
     for candidate in candidates:
         candidate.parent.mkdir(parents=True, exist_ok=True)
@@ -130,9 +130,9 @@ def test_detector_covers_protected_matrix_without_reading_contents(tmp_path: Pat
 
 def test_detector_ignores_empty_and_unsupported_resources(tmp_path: Path) -> None:
     project = tmp_path / "project"
-    (project / ".tau/skills").mkdir(parents=True)
+    (project / ".pi-agent/skills").mkdir(parents=True)
     (project / ".agents/prompts").mkdir(parents=True)
-    (project / ".tau/settings.json").write_text("{}", encoding="utf-8")
+    (project / ".pi-agent/settings.json").write_text("{}", encoding="utf-8")
     (project / ".agents/prompts/reload.md").write_text("reserved", encoding="utf-8")
     (project / "CLAUDE.md").write_text("unsupported", encoding="utf-8")
     (project / "pyproject.toml").write_text("[project]", encoding="utf-8")
@@ -288,7 +288,7 @@ async def test_reload_rechecks_empty_result_but_reuses_nonempty_run_decision(
 def test_untrusted_resource_plan_keeps_user_resources_only(tmp_path: Path) -> None:
     project = tmp_path / "project"
     project.mkdir()
-    paths = TauResourcePaths(root=tmp_path / "home/.tau", cwd=project, agents_root=None)
+    paths = PiResourcePaths(root=tmp_path / "home/.pi-agent", cwd=project, agents_root=None)
 
     untrusted = resource_paths_with_project_trust(paths, trusted=False)
 
@@ -346,16 +346,16 @@ class _Storage:
 @pytest.mark.anyio
 async def test_project_extensions_need_trust_and_additional_opt_in(tmp_path: Path) -> None:
     project = tmp_path / "project"
-    extension_dir = project / ".tau/extensions"
+    extension_dir = project / ".pi-agent/extensions"
     extension_dir.mkdir(parents=True)
     marker = tmp_path / "imported"
     (extension_dir / "project.py").write_text(
         f"from pathlib import Path\nPath({str(marker)!r}).write_text('imported')\n"
-        "def setup(tau):\n    pass\n",
+        "def setup(pi):\n    pass\n",
         encoding="utf-8",
     )
-    resources = TauResourcePaths(
-        root=tmp_path / "home/.tau",
+    resources = PiResourcePaths(
+        root=tmp_path / "home/.pi-agent",
         agents_root=tmp_path / "home/.agents",
     )
     common = {
@@ -459,7 +459,7 @@ async def test_session_default_declines_project_input_and_explicit_approval_load
     project = tmp_path / "project"
     project.mkdir()
     (project / "AGENTS.md").write_text("protected-default-probe", encoding="utf-8")
-    resources = TauResourcePaths(root=tmp_path / "home/.tau", agents_root=None)
+    resources = PiResourcePaths(root=tmp_path / "home/.pi-agent", agents_root=None)
     common = {
         "provider": cast(ModelProvider, object()),
         "model": "fake",
@@ -480,22 +480,22 @@ async def test_session_default_declines_project_input_and_explicit_approval_load
 
 @pytest.mark.anyio
 async def test_destination_rebuild_drops_source_project_extensions(tmp_path: Path) -> None:
-    home_extensions = tmp_path / "home/.tau/extensions"
-    source_extensions = tmp_path / "source/.tau/extensions"
+    home_extensions = tmp_path / "home/.pi-agent/extensions"
+    source_extensions = tmp_path / "source/.pi-agent/extensions"
     destination = tmp_path / "destination"
     home_extensions.mkdir(parents=True)
     source_extensions.mkdir(parents=True)
     destination.mkdir()
     (destination / "AGENTS.md").write_text("destination protected", encoding="utf-8")
     (home_extensions / "global.py").write_text(
-        "def setup(tau):\n    tau.add_prompt_guideline('GLOBAL-GUIDELINE')\n",
+        "def setup(pi):\n    pi.add_prompt_guideline('GLOBAL-GUIDELINE')\n",
         encoding="utf-8",
     )
     (source_extensions / "source.py").write_text(
-        "def setup(tau):\n    tau.add_prompt_guideline('SOURCE-PROJECT-GUIDELINE')\n",
+        "def setup(pi):\n    pi.add_prompt_guideline('SOURCE-PROJECT-GUIDELINE')\n",
         encoding="utf-8",
     )
-    resources = TauResourcePaths(root=tmp_path / "home/.tau", agents_root=None)
+    resources = PiResourcePaths(root=tmp_path / "home/.pi-agent", agents_root=None)
     source = await CodingSession.load(
         CodingSessionConfig(
             provider=cast(ModelProvider, object()),
@@ -537,7 +537,7 @@ async def test_failed_reload_preserves_complete_live_snapshot(tmp_path: Path) ->
             model="fake",
             storage=_Storage(),
             cwd=project,
-            resource_paths=TauResourcePaths(root=tmp_path / "home/.tau", agents_root=None),
+            resource_paths=PiResourcePaths(root=tmp_path / "home/.pi-agent", agents_root=None),
             trust_override="approve",
         )
     )
@@ -597,7 +597,7 @@ async def test_tui_trust_modal_all_choices_support_arrow_navigation(
 
 
 @pytest.mark.anyio
-async def test_standalone_trust_modal_uses_tau_dark_palette(tmp_path: Path) -> None:
+async def test_standalone_trust_modal_uses_pi_dark_palette(tmp_path: Path) -> None:
     project = tmp_path / "project"
     project.mkdir()
     (project / "AGENTS.md").write_text("rules", encoding="utf-8")
@@ -612,15 +612,15 @@ async def test_standalone_trust_modal_uses_tau_dark_palette(tmp_path: Path) -> N
         highlighted_label = choice_list.query_one(ListItem).query_one(Label)
         help_text = str(host.screen.query_one("#project-trust-help", Static).content)
 
-        assert host.theme == TAU_DARK_THEME.name
-        assert "Escape exits Tau" in help_text
-        assert dialog.styles.background == Color.parse(TAU_DARK_THEME.chrome_background)
-        assert dialog.styles.color == Color.parse(TAU_DARK_THEME.chrome_text)
-        assert choice_list.styles.background == Color.parse(TAU_DARK_THEME.transcript_background)
+        assert host.theme == PI_DARK_THEME.name
+        assert "Escape exits Pi" in help_text
+        assert dialog.styles.background == Color.parse(PI_DARK_THEME.chrome_background)
+        assert dialog.styles.color == Color.parse(PI_DARK_THEME.chrome_text)
+        assert choice_list.styles.background == Color.parse(PI_DARK_THEME.transcript_background)
         assert highlighted_label.styles.background == Color.parse(
-            TAU_DARK_THEME.highlight_background
+            PI_DARK_THEME.highlight_background
         )
-        assert highlighted_label.styles.color == Color.parse(TAU_DARK_THEME.highlight_text)
+        assert highlighted_label.styles.color == Color.parse(PI_DARK_THEME.highlight_text)
 
 
 @pytest.mark.anyio
@@ -813,8 +813,8 @@ def test_resource_plan_always_rebinds_to_destination(tmp_path: Path) -> None:
     destination = tmp_path / "destination"
     source.mkdir()
     destination.mkdir()
-    original = TauResourcePaths(
-        root=tmp_path / "home/.tau",
+    original = PiResourcePaths(
+        root=tmp_path / "home/.pi-agent",
         cwd=source,
         agents_root=tmp_path / "home/.agents",
         paths=_paths(tmp_path),
@@ -844,16 +844,16 @@ async def test_source_bound_plan_uses_destination_resources_for_trust_choice(
     destination.mkdir()
     (source / "AGENTS.md").write_text("SOURCE-CONTEXT", encoding="utf-8")
     (destination / "AGENTS.md").write_text("DESTINATION-CONTEXT", encoding="utf-8")
-    source_extension = source / ".tau/extensions/source.py"
-    destination_extension = destination / ".tau/extensions/destination.py"
+    source_extension = source / ".pi-agent/extensions/source.py"
+    destination_extension = destination / ".pi-agent/extensions/destination.py"
     source_extension.parent.mkdir(parents=True)
     destination_extension.parent.mkdir(parents=True)
     source_extension.write_text(
-        "def setup(tau):\n    tau.add_prompt_guideline('SOURCE-EXTENSION')\n",
+        "def setup(pi):\n    pi.add_prompt_guideline('SOURCE-EXTENSION')\n",
         encoding="utf-8",
     )
     destination_extension.write_text(
-        "def setup(tau):\n    tau.add_prompt_guideline('DESTINATION-EXTENSION')\n",
+        "def setup(pi):\n    pi.add_prompt_guideline('DESTINATION-EXTENSION')\n",
         encoding="utf-8",
     )
     observed: list[Path] = []
@@ -868,8 +868,8 @@ async def test_source_bound_plan_uses_destination_resources_for_trust_choice(
             model="fake",
             storage=_Storage(),
             cwd=destination,
-            resource_paths=TauResourcePaths(
-                root=tmp_path / "home/.tau", agents_root=None, cwd=source
+            resource_paths=PiResourcePaths(
+                root=tmp_path / "home/.pi-agent", agents_root=None, cwd=source
             ),
             trust_interactive=True,
             trust_prompt=prompt,  # type: ignore[arg-type]
@@ -906,7 +906,7 @@ async def test_failed_reload_does_not_commit_run_choice_cache(
             model="fake",
             storage=_Storage(),
             cwd=project,
-            resource_paths=TauResourcePaths(root=tmp_path / "home/.tau", agents_root=None),
+            resource_paths=PiResourcePaths(root=tmp_path / "home/.pi-agent", agents_root=None),
             project_trust_coordinator=coordinator,
             trust_interactive=True,
             trust_prompt=prompt,  # type: ignore[arg-type]
@@ -914,7 +914,7 @@ async def test_failed_reload_does_not_commit_run_choice_cache(
     )
     (project / "AGENTS.md").write_text("NEW-CONTEXT", encoding="utf-8")
 
-    from tau_coding import session as session_module
+    from pi_coding import session as session_module
 
     real_load = session_module._load_session_resources
     attempts = 0
@@ -958,20 +958,20 @@ async def test_failed_project_extension_reload_re_resolves_trust(
             model="fake",
             storage=_Storage(),
             cwd=project,
-            resource_paths=TauResourcePaths(root=tmp_path / "home/.tau", agents_root=None),
+            resource_paths=PiResourcePaths(root=tmp_path / "home/.pi-agent", agents_root=None),
             project_trust_coordinator=coordinator,
             project_extensions_enabled=True,
             trust_interactive=True,
             trust_prompt=prompt,
         )
     )
-    extension = project / ".tau/extensions/project.py"
+    extension = project / ".pi-agent/extensions/project.py"
     extension.parent.mkdir(parents=True)
     extension.write_text(
-        "def setup(tau):\n    tau.add_prompt_guideline('DESTINATION-EXTENSION')\n",
+        "def setup(pi):\n    pi.add_prompt_guideline('DESTINATION-EXTENSION')\n",
         encoding="utf-8",
     )
-    from tau_coding.extensions.runtime import ExtensionRuntime
+    from pi_coding.extensions.runtime import ExtensionRuntime
 
     real_load = ExtensionRuntime.load
 
@@ -1004,7 +1004,7 @@ async def test_cancelled_destination_staging_leaves_source_session_and_cache_unc
     (source / "AGENTS.md").write_text("SOURCE-ACTIVE", encoding="utf-8")
     (destination / "AGENTS.md").write_text("DESTINATION-CANCELLED", encoding="utf-8")
     coordinator = ProjectTrustCoordinator(ProjectTrustStore(_paths(tmp_path)))
-    resources = TauResourcePaths(root=tmp_path / "home/.tau", agents_root=None)
+    resources = PiResourcePaths(root=tmp_path / "home/.pi-agent", agents_root=None)
     active = await CodingSession.load(
         CodingSessionConfig(
             provider=cast(ModelProvider, object()),
@@ -1067,7 +1067,7 @@ async def test_new_session_trust_cancellation_preserves_active_session(tmp_path:
             cwd=project,
             session_id=record.id,
             session_manager=manager,
-            resource_paths=TauResourcePaths(
+            resource_paths=PiResourcePaths(
                 root=paths.home,
                 agents_root=paths.agents_home,
                 paths=paths,
@@ -1116,7 +1116,7 @@ async def test_reload_cancellation_during_shutdown_preserves_snapshot_and_re_res
             model="fake",
             storage=_Storage(),
             cwd=project,
-            resource_paths=TauResourcePaths(root=tmp_path / "home/.tau", agents_root=None),
+            resource_paths=PiResourcePaths(root=tmp_path / "home/.pi-agent", agents_root=None),
             project_trust_coordinator=coordinator,
             trust_interactive=True,
             trust_prompt=prompt,
@@ -1149,7 +1149,7 @@ async def test_reload_cancellation_during_shutdown_preserves_snapshot_and_re_res
 async def test_reload_cancellation_during_staged_start_preserves_snapshot_and_re_resolves(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from tau_coding.extensions.runtime import ExtensionRuntime
+    from pi_coding.extensions.runtime import ExtensionRuntime
 
     project = tmp_path / "project"
     project.mkdir()
@@ -1167,7 +1167,7 @@ async def test_reload_cancellation_during_staged_start_preserves_snapshot_and_re
             model="fake",
             storage=_Storage(),
             cwd=project,
-            resource_paths=TauResourcePaths(root=tmp_path / "home/.tau", agents_root=None),
+            resource_paths=PiResourcePaths(root=tmp_path / "home/.pi-agent", agents_root=None),
             project_trust_coordinator=coordinator,
             trust_interactive=True,
             trust_prompt=prompt,
@@ -1205,7 +1205,7 @@ async def test_reload_cancellation_during_staged_start_preserves_snapshot_and_re
 async def test_destination_adoption_cancellation_keeps_source_and_retry_resolves_again(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from tau_coding.extensions.runtime import ExtensionRuntime
+    from pi_coding.extensions.runtime import ExtensionRuntime
 
     source = tmp_path / "source"
     destination = tmp_path / "destination"
@@ -1214,7 +1214,7 @@ async def test_destination_adoption_cancellation_keeps_source_and_retry_resolves
     (source / "AGENTS.md").write_text("SOURCE-CONTEXT", encoding="utf-8")
     (destination / "AGENTS.md").write_text("DESTINATION-CONTEXT", encoding="utf-8")
     coordinator = ProjectTrustCoordinator(ProjectTrustStore(_paths(tmp_path)))
-    resources = TauResourcePaths(root=tmp_path / "home/.tau", agents_root=None)
+    resources = PiResourcePaths(root=tmp_path / "home/.pi-agent", agents_root=None)
     active = await CodingSession.load(
         CodingSessionConfig(
             provider=cast(ModelProvider, object()),

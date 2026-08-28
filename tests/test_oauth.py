@@ -6,7 +6,7 @@ from urllib.parse import parse_qs, urlparse
 import httpx
 import pytest
 
-from tau_coding.oauth import (
+from pi_coding.oauth import (
     OPENAI_CODEX_ACCOUNT_CLAIM,
     OPENAI_CODEX_CLIENT_ID,
     account_id_from_access_token,
@@ -17,7 +17,7 @@ from tau_coding.oauth import (
 
 
 def test_create_openai_codex_authorization_flow_includes_pkce_and_codex_params() -> None:
-    flow = create_openai_codex_authorization_flow(originator="tau-test")
+    flow = create_openai_codex_authorization_flow(originator="pi-test")
 
     url = urlparse(flow.url)
     params = parse_qs(url.query)
@@ -29,7 +29,7 @@ def test_create_openai_codex_authorization_flow_includes_pkce_and_codex_params()
     assert params["scope"] == ["openid profile email offline_access"]
     assert params["code_challenge_method"] == ["S256"]
     assert params["codex_cli_simplified_flow"] == ["true"]
-    assert params["originator"] == ["tau-test"]
+    assert params["originator"] == ["pi-test"]
     assert params["state"] == [flow.state]
     assert params["code_challenge"][0]
     assert flow.verifier

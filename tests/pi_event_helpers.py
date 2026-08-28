@@ -1,7 +1,7 @@
 """Canonical Pi event constructors used by the test suite."""
 
-from tau_agent.messages import AssistantMessage, ThinkingContent, ToolCall
-from tau_agent.provider_events import (
+from pi_agent.messages import AssistantMessage, ThinkingContent, ToolCall
+from pi_agent.provider_events import (
     AssistantDoneEvent,
     AssistantErrorEvent,
     AssistantStartEvent,

@@ -6,19 +6,19 @@ Authority: `E:\GPTProject2\erp-agent-odoo-deps\pi` at
 This ledger tracks observable behavior, not similarly named classes. A row is
 complete only after the matching Pi scenario has a deterministic Python test.
 
-| Pi layer | Authoritative source | Tau target | Status |
+| Pi layer | Authoritative source | Pi Agent target | Status |
 |---|---|---|---|
-| Provider messages, thinking, usage | `packages/ai/src` | `tau_ai` | Core transform/replay path covered for Anthropic, Google, Mistral, OpenAI-compatible and Codex Responses; provider-specific streaming matrices remain |
-| Model/tool loop | `packages/agent/src/agent-loop.ts` | `tau_agent/loop.py` | Main ordering, hooks, parallel/sequential tools, termination, truncation and active provider/tool cancellation covered |
-| Stateful Agent | `packages/agent/src/agent.ts` | `tau_agent/harness.py` | Main state/lifecycle path, per-run system replacement and settled-tool late-update guard covered |
-| AgentSession | `packages/coding-agent/src/core/agent-session.ts` | `tau_coding/session.py` | Core prompt/continue, queues, transient retry, retry settlement, recoverable-length compact/retry, per-tool-turn state refresh and full tool-loop wait covered; final independent comparison pending |
-| Session tree/JSONL | `packages/coding-agent/src/core/session-manager.ts` | `tau_agent/session`, `tau_coding/session_manager.py` | Active leaf, branch summary, latest-compaction context and legacy linear replay covered; fork/label/migration matrix remains |
-| Compaction and branch summary | `packages/coding-agent/src/core/compaction` | `tau_coding/session.py`, `tau_coding/branch_summary.py` | Pi cut point, first-kept boundary, split-turn prefix, serialization and compact/tree extension interception covered; full fork/tree operation matrix remains |
-| System prompt | `packages/coding-agent/src/core/system-prompt.ts` | `tau_coding/system_prompt.py` | Core prompt behavior aligned; Tau name/docs paths and extension section seam intentionally remain |
-| Resources and skills | `resource-loader.ts`, `skills.ts`, `prompt-templates.ts` | `tau_coding/resources.py`, `skills.py`, `prompt_templates.py` | Pi YAML 1.2 frontmatter, recursive discovery, ignore files, validation, collision order, skill-before-template expansion, invocation reload and extension resource merge covered |
-| Extensions | `packages/coding-agent/src/core/extensions` | `tau_coding/extensions` | Core resource/context/prompt, provider, session switch/fork/tree/compact, message replacement and tool lifecycle hooks ported; UI/command/flag surfaces remain outside this base |
-| Print/JSON/RPC/interactive modes | `packages/coding-agent/src/modes` | `tau_coding` CLI/rendering/RPC/TUI | Existing implementation; unverified as a complete layer |
-| Telemetry/protocol/client/server | corresponding Pi packages plus `coding-agent/src/server` | no single Tau target | Pending; no new telemetry stack will be invented |
+| Provider messages, thinking, usage | `packages/ai/src` | `pi_ai` | Core transform/replay path covered for Anthropic, Google, Mistral, OpenAI-compatible and Codex Responses; provider-specific streaming matrices remain |
+| Model/tool loop | `packages/agent/src/agent-loop.ts` | `pi_agent/loop.py` | Main ordering, hooks, parallel/sequential tools, termination, truncation and active provider/tool cancellation covered |
+| Stateful Agent | `packages/agent/src/agent.ts` | `pi_agent/harness.py` | Main state/lifecycle path, per-run system replacement and settled-tool late-update guard covered |
+| AgentSession | `packages/coding-agent/src/core/agent-session.ts` | `pi_coding/session.py` | Core prompt/continue, queues, transient retry, retry settlement, recoverable-length compact/retry, per-tool-turn state refresh and full tool-loop wait covered; final independent comparison pending |
+| Session tree/JSONL | `packages/coding-agent/src/core/session-manager.ts` | `pi_agent/session`, `pi_coding/session_manager.py` | Active leaf, branch summary, latest-compaction context and legacy linear replay covered; fork/label/migration matrix remains |
+| Compaction and branch summary | `packages/coding-agent/src/core/compaction` | `pi_coding/session.py`, `pi_coding/branch_summary.py` | Pi cut point, first-kept boundary, split-turn prefix, serialization and compact/tree extension interception covered; full fork/tree operation matrix remains |
+| System prompt | `packages/coding-agent/src/core/system-prompt.ts` | `pi_coding/system_prompt.py` | Core prompt behavior and product documentation paths aligned; extension section seam remains |
+| Resources and skills | `resource-loader.ts`, `skills.ts`, `prompt-templates.ts` | `pi_coding/resources.py`, `skills.py`, `prompt_templates.py` | Pi YAML 1.2 frontmatter, recursive discovery, ignore files, validation, collision order, skill-before-template expansion, invocation reload and extension resource merge covered |
+| Extensions | `packages/coding-agent/src/core/extensions` | `pi_coding/extensions` | Core resource/context/prompt, provider, session switch/fork/tree/compact, message replacement and tool lifecycle hooks ported; UI/command/flag surfaces remain outside this base |
+| Print/JSON/RPC/interactive modes | `packages/coding-agent/src/modes` | `pi_coding` CLI/rendering/RPC/TUI | Existing implementation; unverified as a complete layer |
+| Telemetry/protocol/client/server | corresponding Pi packages plus `coding-agent/src/server` | no single Pi Agent target | Pending; no new telemetry stack will be invented |
 
 ## Current verified deltas
 
@@ -30,7 +30,7 @@ complete only after the matching Pi scenario has a deterministic Python test.
 - Overflow and Hugging Face route retries remove the retriable assistant failure
   from active model context while retaining persisted evidence, matching Pi's
   AgentSession retry boundary.
-- The default system prompt no longer adds Tau-only date or policy bullets, and
+- The default system prompt no longer adds predecessor-only date or policy bullets, and
   empty custom prompts follow Pi's default-prompt behavior.
 - Subscribers receive the active cancellation signal and remain part of run
   settlement through the final `agent_end` event.
@@ -65,7 +65,7 @@ complete only after the matching Pi scenario has a deterministic Python test.
 
 ## Integration status
 
-- Real Pi/Tau plain and synthetic tool-call probes passed on the same model profile.
+- Real Pi/Pi Agent plain and synthetic tool-call probes passed on the same model profile.
 - The thin official-SDK MCP adapter completed a real Odoo ERP-Bench task with
   reward 100. The matching Pi baseline also scored 100; this one-task result is
   chain evidence, not a benchmark ranking.

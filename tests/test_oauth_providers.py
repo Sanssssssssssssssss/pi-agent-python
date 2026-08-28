@@ -4,29 +4,29 @@ from typing import cast
 import httpx
 import pytest
 
-from tau_coding.credentials import FileCredentialStore, OAuthCredential
-from tau_coding.oauth import OAuthError, oauth_credential_is_expired
-from tau_coding.oauth_anthropic import (
+from pi_coding.credentials import FileCredentialStore, OAuthCredential
+from pi_coding.oauth import OAuthError, oauth_credential_is_expired
+from pi_coding.oauth_anthropic import (
     ANTHROPIC_CLIENT_ID,
     ANTHROPIC_TOKEN_URL,
     refresh_anthropic_token,
 )
-from tau_coding.oauth_device import DevicePollResult, poll_oauth_device_code
-from tau_coding.oauth_github_copilot import (
+from pi_coding.oauth_device import DevicePollResult, poll_oauth_device_code
+from pi_coding.oauth_github_copilot import (
     GITHUB_COPILOT_CLIENT_ID,
     github_copilot_base_url,
     login_github_copilot,
     normalize_github_domain,
     refresh_github_copilot_token,
 )
-from tau_coding.oauth_registry import (
+from pi_coding.oauth_registry import (
     get_oauth_provider,
     oauth_provider_ids,
     register_oauth_provider,
     reset_oauth_providers,
     unregister_oauth_provider,
 )
-from tau_coding.oauth_types import (
+from pi_coding.oauth_types import (
     OAuthDeviceCodeInfo,
     OAuthLoginCallbacks,
     OAuthPrompt,
@@ -34,8 +34,8 @@ from tau_coding.oauth_types import (
     OAuthRuntimeAuth,
     OAuthSelectPrompt,
 )
-from tau_coding.provider_config import provider_config_from_catalog_entry
-from tau_coding.provider_runtime import OAuthRuntimeCredentialResolver, _refresh_lock
+from pi_coding.provider_config import provider_config_from_catalog_entry
+from pi_coding.provider_runtime import OAuthRuntimeCredentialResolver, _refresh_lock
 
 
 def _callbacks(

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from io import StringIO
 
-from tau_coding.tui.terminal_title import (
+from pi_coding.tui.terminal_title import (
     MAX_TERMINAL_TITLE_LENGTH,
     TerminalTitleController,
     build_terminal_title,
@@ -23,13 +23,13 @@ class PipeStringIO(StringIO):
 
 
 def test_build_terminal_title_uses_session_name_and_running_frame() -> None:
-    assert build_terminal_title("build notes", running=False) == "τ | build notes"
-    assert build_terminal_title("build notes", running=True, frame=1) == "⠙ τ | build notes"
+    assert build_terminal_title("build notes", running=False) == "π | build notes"
+    assert build_terminal_title("build notes", running=True, frame=1) == "⠙ π | build notes"
 
 
 def test_build_terminal_title_falls_back_for_unnamed_sessions() -> None:
-    assert build_terminal_title(None, running=False) == "τ"
-    assert build_terminal_title(" Untitled session ", running=True) == "⠋ τ"
+    assert build_terminal_title(None, running=False) == "π"
+    assert build_terminal_title(" Untitled session ", running=True) == "⠋ π"
 
 
 def test_sanitize_terminal_title_strips_control_bytes_and_caps_length() -> None:
@@ -56,7 +56,7 @@ def test_terminal_title_supported_requires_tty_and_allows_opt_out() -> None:
     )
     assert not terminal_title_supported(environ={"TERM": "xterm-256color"}, stream=PipeStringIO())
     assert not terminal_title_supported(
-        environ={"TERM": "xterm-256color", "TAU_TERMINAL_TITLE": "0"},
+        environ={"TERM": "xterm-256color", "PI_AGENT_TERMINAL_TITLE": "0"},
         stream=TtyStringIO(),
     )
     assert not terminal_title_supported(environ={"TERM": "dumb"}, stream=TtyStringIO())
@@ -72,9 +72,9 @@ def test_terminal_title_controller_writes_running_idle_and_restore_titles() -> N
     controller.restore()
 
     assert writes == [
-        "\x1b]0;τ | build notes\x07",
-        "\x1b]0;⠹ τ | build notes\x07",
-        "\x1b]0;τ\x07",
+        "\x1b]0;π | build notes\x07",
+        "\x1b]0;⠹ π | build notes\x07",
+        "\x1b]0;π\x07",
     ]
 
 

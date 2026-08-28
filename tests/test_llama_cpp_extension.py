@@ -12,17 +12,17 @@ import httpx
 import pytest
 
 from conftest import isolate_home
-from tau_agent.harness import SimpleCancellationToken
-from tau_ai.env import DEFAULT_OPENAI_COMPATIBLE_TIMEOUT_SECONDS
-from tau_coding.credentials import FileCredentialStore
-from tau_coding.extensions import ExtensionRuntime
-from tau_coding.extensions.builtins.llama_cpp import service as llama_service
-from tau_coding.extensions.builtins.llama_cpp.huggingface import discover_hf_token
-from tau_coding.extensions.builtins.llama_cpp.router import (
+from pi_agent.harness import SimpleCancellationToken
+from pi_ai.env import DEFAULT_OPENAI_COMPATIBLE_TIMEOUT_SECONDS
+from pi_coding.credentials import FileCredentialStore
+from pi_coding.extensions import ExtensionRuntime
+from pi_coding.extensions.builtins.llama_cpp import service as llama_service
+from pi_coding.extensions.builtins.llama_cpp.huggingface import discover_hf_token
+from pi_coding.extensions.builtins.llama_cpp.router import (
     RouterCapability,
     watch_router_download_progress,
 )
-from tau_coding.extensions.builtins.llama_cpp.service import (
+from pi_coding.extensions.builtins.llama_cpp.service import (
     LLAMA_CPP_API_KEY_ENV,
     LLAMA_CPP_DEFAULT_ENDPOINT,
     LLAMA_CPP_ENDPOINT_ENV,
@@ -30,18 +30,18 @@ from tau_coding.extensions.builtins.llama_cpp.service import (
     LlamaCppService,
     normalize_llama_cpp_endpoint,
 )
-from tau_coding.extensions.builtins.llama_cpp.state import (
+from pi_coding.extensions.builtins.llama_cpp.state import (
     LLAMA_CPP_CREDENTIAL_PREFIX,
     LlamaCppIntegrationState,
     LlamaCppStateError,
     LlamaCppStateStore,
     LlamaCppStoredModel,
 )
-from tau_coding.extensions.providers import ProviderRefreshContext, ResolvedProviderAuth
-from tau_coding.local_backends import LocalOperationContext, LocalProgress
-from tau_coding.paths import TauPaths
-from tau_coding.provider_runtime import create_dynamic_model_provider
-from tau_coding.resources import TauResourcePaths
+from pi_coding.extensions.providers import ProviderRefreshContext, ResolvedProviderAuth
+from pi_coding.local_backends import LocalOperationContext, LocalProgress
+from pi_coding.paths import PiPaths
+from pi_coding.provider_runtime import create_dynamic_model_provider
+from pi_coding.resources import PiResourcePaths
 
 pytestmark = pytest.mark.anyio
 
@@ -126,7 +126,7 @@ def _service(
     credentials: object | None = None,
     environment: Mapping[str, str] | None = None,
 ) -> tuple[LlamaCppService, LlamaCppStateStore, FileCredentialStore]:
-    paths = TauPaths(home=tmp_path / "tau", agents_home=tmp_path / "agents")
+    paths = PiPaths(home=tmp_path / "pi", agents_home=tmp_path / "agents")
     state_store = LlamaCppStateStore(paths=paths)
     credential_store = FileCredentialStore(paths.home / "credentials.json")
     service = LlamaCppService(
@@ -143,8 +143,8 @@ def _runtime(
     *,
     client: httpx.AsyncClient | None = None,
     environment: Mapping[str, str] | None = None,
-) -> tuple[ExtensionRuntime, TauPaths, FileCredentialStore]:
-    paths = TauPaths(home=tmp_path / "tau", agents_home=tmp_path / "agents")
+) -> tuple[ExtensionRuntime, PiPaths, FileCredentialStore]:
+    paths = PiPaths(home=tmp_path / "pi", agents_home=tmp_path / "agents")
     credentials = FileCredentialStore(paths.home / "credentials.json")
     runtime = ExtensionRuntime(
         paths=paths,
@@ -154,7 +154,7 @@ def _runtime(
         built_in_http_client=client,
     )
     runtime.load(
-        TauResourcePaths(
+        PiResourcePaths(
             root=paths.home,
             agents_root=paths.agents_home,
             paths=paths,
@@ -196,7 +196,7 @@ def test_endpoint_normalization_rejects_unsafe_values(value: str) -> None:
 
 def test_endpoint_precedence_is_stored_then_environment_then_default(tmp_path: Path) -> None:
     state_store = LlamaCppStateStore(
-        paths=TauPaths(home=tmp_path / "tau", agents_home=tmp_path / "agents")
+        paths=PiPaths(home=tmp_path / "pi", agents_home=tmp_path / "agents")
     )
     state_store.save(_state(endpoint=f"{SERVER}/saved"))
     stored = LlamaCppService(
@@ -207,7 +207,7 @@ def test_endpoint_precedence_is_stored_then_environment_then_default(tmp_path: P
 
     environment = LlamaCppService(
         state_store=LlamaCppStateStore(
-            paths=TauPaths(home=tmp_path / "other", agents_home=tmp_path / "agents")
+            paths=PiPaths(home=tmp_path / "other", agents_home=tmp_path / "agents")
         ),
         environment={LLAMA_CPP_ENDPOINT_ENV: "http://env.test:9000/v1"},
     )
@@ -215,7 +215,7 @@ def test_endpoint_precedence_is_stored_then_environment_then_default(tmp_path: P
 
     dormant = LlamaCppService(
         state_store=LlamaCppStateStore(
-            paths=TauPaths(home=tmp_path / "empty", agents_home=tmp_path / "agents")
+            paths=PiPaths(home=tmp_path / "empty", agents_home=tmp_path / "agents")
         ),
         environment={},
     )
@@ -297,7 +297,7 @@ async def test_discovery_reports_authentication_http_failures(
     state_store.save(_state())
     service = LlamaCppService(
         state_store=state_store,
-        credential_store=FileCredentialStore(tmp_path / "tau" / "credentials.json"),
+        credential_store=FileCredentialStore(tmp_path / "pi" / "credentials.json"),
         client=client,
     )
     result = await service.refresh(_context())
@@ -317,7 +317,7 @@ async def test_discovery_timeout_and_health_loading_are_actionable(tmp_path: Pat
     state_store.save(_state())
     service = LlamaCppService(
         state_store=state_store,
-        credential_store=FileCredentialStore(tmp_path / "tau" / "credentials.json"),
+        credential_store=FileCredentialStore(tmp_path / "pi" / "credentials.json"),
         client=client,
     )
     with pytest.raises(LlamaCppError, match="Timed out"):
@@ -503,7 +503,7 @@ async def test_gpt_and_codex_model_ids_use_local_chat_transport(tmp_path: Path) 
 
 
 def test_state_is_atomic_locked_private_and_recovers_interrupted_writes(tmp_path: Path) -> None:
-    paths = TauPaths(home=tmp_path / "tau", agents_home=tmp_path / "agents")
+    paths = PiPaths(home=tmp_path / "pi", agents_home=tmp_path / "agents")
     store = LlamaCppStateStore(paths=paths)
     store.save(_state())
     if sys.platform != "win32":
@@ -552,7 +552,7 @@ def test_state_schema_validation_and_legacy_recovery(tmp_path: Path) -> None:
 def test_state_replace_is_atomic_on_write_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import tau_coding.extensions.builtins.llama_cpp.state as state_module
+    import pi_coding.extensions.builtins.llama_cpp.state as state_module
 
     store = LlamaCppStateStore(tmp_path / "state.json")
     store.save(_state())
@@ -585,7 +585,7 @@ async def test_setup_status_refresh_use_doctor_and_reset_through_real_runtime(
             if payload.get("tools"):
                 text = (
                     'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-1",'
-                    '"function":{"name":"tau_probe","arguments":"{}"}}]},'
+                    '"function":{"name":"pi_probe","arguments":"{}"}}]},'
                     '"finish_reason":"tool_calls"}]}'
                     "\n\ndata: [DONE]\n\n"
                 )
@@ -744,10 +744,10 @@ async def test_credential_cleanup_failure_is_reported_and_reset_is_recoverable(
 async def test_print_mode_explicit_dynamic_startup_uses_cached_state(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    from tau_coding.cli import run_print_mode
-    from tau_coding.rendering import PrintOutputMode
+    from pi_coding.cli import run_print_mode
+    from pi_coding.rendering import PrintOutputMode
 
-    paths = TauPaths(home=tmp_path / "tau", agents_home=tmp_path / "agents")
+    paths = PiPaths(home=tmp_path / "pi", agents_home=tmp_path / "agents")
     LlamaCppStateStore(paths=paths).save(_state())
     project = tmp_path / "project"
     project.mkdir()
@@ -770,7 +770,7 @@ async def test_print_mode_explicit_dynamic_startup_uses_cached_state(
         return httpx.AsyncClient(transport=httpx.MockTransport(handler), timeout=timeout)
 
     monkeypatch.setattr(llama_service, "create_async_client", fake_client)
-    import tau_ai.openai_compatible as compatible
+    import pi_ai.openai_compatible as compatible
 
     monkeypatch.setattr(compatible, "create_async_client", fake_client)
     ok = await run_print_mode(
@@ -779,9 +779,7 @@ async def test_print_mode_explicit_dynamic_startup_uses_cached_state(
         cwd=project,
         provider=None,
         output=PrintOutputMode.text,
-        resource_paths=TauResourcePaths(
-            root=paths.home, agents_root=paths.agents_home, paths=paths
-        ),
+        resource_paths=PiResourcePaths(root=paths.home, agents_root=paths.agents_home, paths=paths),
         provider_name="llama.cpp",
         requested_provider="llama.cpp",
         requested_model="qwen-local",
@@ -796,11 +794,11 @@ async def test_print_mode_explicit_dynamic_startup_uses_cached_state(
 async def test_tui_explicit_dynamic_startup_uses_cached_state_during_downtime(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from tau_coding import SessionManager
-    from tau_coding.tui import app as tui_app
+    from pi_coding import SessionManager
+    from pi_coding.tui import app as tui_app
 
     isolate_home(monkeypatch, tmp_path)
-    paths = TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents")
+    paths = PiPaths(home=tmp_path / ".pi-agent", agents_home=tmp_path / ".agents")
     LlamaCppStateStore(paths=paths).save(_state())
     project = tmp_path / "project"
     project.mkdir()
@@ -821,7 +819,7 @@ async def test_tui_explicit_dynamic_startup_uses_cached_state_during_downtime(
 
         return httpx.AsyncClient(transport=httpx.MockTransport(handler), timeout=timeout)
 
-    monkeypatch.setattr(tui_app, "TauTuiApp", HeadlessTui)
+    monkeypatch.setattr(tui_app, "PiTuiApp", HeadlessTui)
     monkeypatch.setattr(llama_service, "create_async_client", unavailable_client)
     session_id = await tui_app.run_tui_app(
         model="qwen-local",
@@ -848,7 +846,7 @@ async def test_builtin_source_lifecycle_is_generation_local(tmp_path: Path) -> N
     runtime.reset_for_reload()
     assert old_registry.effective("llama.cpp") is None
     runtime.load(
-        TauResourcePaths(root=tmp_path / "tau", agents_root=tmp_path / "agents"),
+        PiResourcePaths(root=tmp_path / "pi", agents_root=tmp_path / "agents"),
         include_resource_dirs=False,
         include_user_dir=False,
     )
@@ -1415,14 +1413,14 @@ async def test_llama_scoped_reference_persists_pair_and_stays_inert_when_unloade
 ) -> None:
     from dataclasses import replace
 
-    from tau_coding.provider_config import (
+    from pi_coding.provider_config import (
         OpenAICompatibleProviderConfig,
         ProviderSettings,
         load_provider_settings,
     )
-    from tau_coding.session import CodingSession, ModelChoice
+    from pi_coding.session import CodingSession, ModelChoice
 
-    paths = TauPaths(home=tmp_path / "tau", agents_home=tmp_path / "agents")
+    paths = PiPaths(home=tmp_path / "pi", agents_home=tmp_path / "agents")
     LlamaCppStateStore(paths=paths).save(_state())
     runtime, _, _ = _runtime(tmp_path)
     settings = ProviderSettings(
@@ -1435,7 +1433,7 @@ async def test_llama_scoped_reference_persists_pair_and_stays_inert_when_unloade
     session = object.__new__(CodingSession)
     session._provider_settings = settings
     session._provider_registry = runtime.provider_registry
-    session._resource_paths = TauResourcePaths(root=paths.home, paths=paths)
+    session._resource_paths = PiResourcePaths(root=paths.home, paths=paths)
     session._credential_store = FileCredentialStore(paths.home / "credentials.json")
     session._sync_thinking_level_to_active_model = lambda: None  # type: ignore[method-assign]
     choice = ModelChoice(provider_name="llama.cpp", model="qwen-local")
@@ -1466,7 +1464,7 @@ async def test_llama_scoped_reference_persists_pair_and_stays_inert_when_unloade
 
 
 def state_store_text(tmp_path: Path) -> str:
-    path = TauPaths(home=tmp_path / "tau", agents_home=tmp_path / "agents").llama_cpp_state_path
+    path = PiPaths(home=tmp_path / "pi", agents_home=tmp_path / "agents").llama_cpp_state_path
     return path.read_text(encoding="utf-8") if path.exists() else ""
 
 

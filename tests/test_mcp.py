@@ -5,7 +5,7 @@ from mcp.types import CallToolResult
 from mcp.types import TextContent as McpTextContent
 from mcp.types import Tool as McpTool
 
-from tau_agent.mcp import _agent_tool
+from pi_agent.mcp import _agent_tool
 
 
 class FakeSession:

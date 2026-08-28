@@ -2,11 +2,11 @@ from pathlib import Path
 
 from rich.console import Console
 
-from tau_coding.commands import create_default_command_registry
-from tau_coding.prompt_templates import PromptTemplate
-from tau_coding.skills import Skill
-from tau_coding.tui.autocomplete import CompletionOption, build_completion_state
-from tau_coding.tui.widgets import render_completion_suggestions
+from pi_coding.commands import create_default_command_registry
+from pi_coding.prompt_templates import PromptTemplate
+from pi_coding.skills import Skill
+from pi_coding.tui.autocomplete import CompletionOption, build_completion_state
+from pi_coding.tui.widgets import render_completion_suggestions
 
 
 def test_command_completion_for_slash_lists_every_registered_command() -> None:
@@ -404,16 +404,16 @@ def test_thinking_argument_completion_uses_available_modes() -> None:
 
 def test_theme_argument_completion_uses_theme_names() -> None:
     state = build_completion_state(
-        "/theme tau-",
+        "/theme pi-",
         command_registry=create_default_command_registry(),
         skills=(),
         prompt_templates=(),
-        theme_names=("tau-dark", "tau-light", "high-contrast"),
+        theme_names=("pi-dark", "pi-light", "high-contrast"),
     )
 
-    assert [item.display for item in state.items] == ["tau-dark", "tau-light"]
+    assert [item.display for item in state.items] == ["pi-dark", "pi-light"]
     assert state.selected is not None
-    assert state.selected.apply("/theme tau-") == "/theme tau-dark"
+    assert state.selected.apply("/theme pi-") == "/theme pi-dark"
 
 
 def test_resume_argument_completion_uses_session_ids() -> None:

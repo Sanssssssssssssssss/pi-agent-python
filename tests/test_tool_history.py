@@ -1,5 +1,5 @@
-from tau_agent import AssistantMessage, TextContent, ToolCall, ToolResultMessage, UserMessage
-from tau_agent.tool_history import repair_tool_history
+from pi_agent import AssistantMessage, TextContent, ToolCall, ToolResultMessage, UserMessage
+from pi_agent.tool_history import repair_tool_history
 
 
 def _call(call_id: str = "call-1", name: str = "read") -> ToolCall:

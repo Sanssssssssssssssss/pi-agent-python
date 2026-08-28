@@ -1,13 +1,13 @@
 from pathlib import Path
 
-from tau_coding.commands import CommandRegistry, SlashCommand, create_default_command_registry
-from tau_coding.paths import TauPaths
-from tau_coding.reload import CodingReloadSummary, ReloadCategorySummary
-from tau_coding.session import ModelChoice
-from tau_coding.session_manager import SessionManager
-from tau_coding.skills import Skill
-from tau_coding.system_prompt import ProjectContextFile
-from tau_coding.tools import create_coding_tools
+from pi_coding.commands import CommandRegistry, SlashCommand, create_default_command_registry
+from pi_coding.paths import PiPaths
+from pi_coding.reload import CodingReloadSummary, ReloadCategorySummary
+from pi_coding.session import ModelChoice
+from pi_coding.session_manager import SessionManager
+from pi_coding.skills import Skill
+from pi_coding.system_prompt import ProjectContextFile
+from pi_coding.tools import create_coding_tools
 
 
 class FakeSession:
@@ -43,9 +43,9 @@ class FakeSession:
         self.thinking_level = "medium"
         self.available_thinking_levels = ("off", "minimal", "low", "medium", "high", "xhigh")
         self.thinking_unavailable_reason: str | None = None
-        self.tui_theme = "tau-dark"
+        self.tui_theme = "pi-dark"
         self.resource_diagnostics = ()
-        self.system_prompt = "You are Tau.\nFollow project instructions."
+        self.system_prompt = "You are Pi.\nFollow project instructions."
         self.session_id = "session-1"
         self.session_title: str | None = None
         self.session_manager: SessionManager | None = manager
@@ -172,7 +172,7 @@ def test_system_command_returns_active_prompt(tmp_path: Path) -> None:
     result = registry.execute(session, "/system")
 
     assert result.handled is True
-    assert result.message == "You are Tau.\nFollow project instructions."
+    assert result.message == "You are Pi.\nFollow project instructions."
     assert registry.execute(session, "/system extra").message == "Usage: /system"
 
 
@@ -371,17 +371,17 @@ def test_theme_command_requests_picker_and_sets_theme(tmp_path: Path) -> None:
     registry = create_default_command_registry()
 
     list_result = registry.execute(session, "/theme")
-    switch_result = registry.execute(session, "/theme tau-light")
+    switch_result = registry.execute(session, "/theme pi-light")
     unknown_result = registry.execute(session, "/theme solarized")
 
     assert list_result.theme_picker_requested is True
-    assert switch_result.theme == "tau-light"
+    assert switch_result.theme == "pi-light"
     assert unknown_result.message is not None
     assert "Unknown theme: solarized" in unknown_result.message
 
 
 def test_theme_command_accepts_registered_custom_theme(tmp_path: Path) -> None:
-    from tau_coding.tui.themes import (
+    from pi_coding.tui.themes import (
         THEME_COLOR_FIELDS,
         TRANSCRIPT_ROLES,
         parse_tui_theme_json,
@@ -500,7 +500,7 @@ def test_reload_command_requests_async_session_reload(tmp_path: Path) -> None:
 
 
 def test_resume_without_argument_requests_picker(tmp_path: Path) -> None:
-    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    manager = SessionManager(PiPaths(home=tmp_path / ".pi-agent", agents_home=tmp_path / ".agents"))
     session = FakeSession(tmp_path, manager=manager)
 
     result = create_default_command_registry().execute(session, "/resume")
@@ -511,7 +511,7 @@ def test_resume_without_argument_requests_picker(tmp_path: Path) -> None:
 
 
 def test_resume_command_requests_indexed_session(tmp_path: Path) -> None:
-    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    manager = SessionManager(PiPaths(home=tmp_path / ".pi-agent", agents_home=tmp_path / ".agents"))
     record = manager.create_session(cwd=tmp_path, model="fake-model", title="Test session")
     session = FakeSession(tmp_path, manager=manager)
 
@@ -522,7 +522,7 @@ def test_resume_command_requests_indexed_session(tmp_path: Path) -> None:
 
 
 def test_resume_command_rejects_missing_or_unknown_session(tmp_path: Path) -> None:
-    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    manager = SessionManager(PiPaths(home=tmp_path / ".pi-agent", agents_home=tmp_path / ".agents"))
     session = FakeSession(tmp_path, manager=manager)
 
     unknown = create_default_command_registry().execute(session, "/resume missing")
@@ -531,7 +531,7 @@ def test_resume_command_rejects_missing_or_unknown_session(tmp_path: Path) -> No
 
 
 def test_name_command_shows_current_name_and_usage(tmp_path: Path) -> None:
-    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    manager = SessionManager(PiPaths(home=tmp_path / ".pi-agent", agents_home=tmp_path / ".agents"))
     record = manager.create_session(cwd=tmp_path, model="fake-model", title="Test session")
     session = FakeSession(tmp_path, manager=manager)
     session.session_id = record.id
@@ -542,7 +542,7 @@ def test_name_command_shows_current_name_and_usage(tmp_path: Path) -> None:
 
 
 def test_name_command_requests_session_rename(tmp_path: Path) -> None:
-    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    manager = SessionManager(PiPaths(home=tmp_path / ".pi-agent", agents_home=tmp_path / ".agents"))
     record = manager.create_session(cwd=tmp_path, model="fake-model", title="Old name")
     session = FakeSession(tmp_path, manager=manager)
     session.session_id = record.id
@@ -557,7 +557,7 @@ def test_name_command_requests_session_rename(tmp_path: Path) -> None:
 
 
 def test_name_command_defers_indexing_pending_session(tmp_path: Path) -> None:
-    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    manager = SessionManager(PiPaths(home=tmp_path / ".pi-agent", agents_home=tmp_path / ".agents"))
     session = FakeSession(tmp_path, manager=manager)
     session.session_id = "pending-session"
 
@@ -576,7 +576,7 @@ def test_name_command_reports_missing_session_manager(tmp_path: Path) -> None:
 
 
 def test_name_command_rejects_multiline_name(tmp_path: Path) -> None:
-    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    manager = SessionManager(PiPaths(home=tmp_path / ".pi-agent", agents_home=tmp_path / ".agents"))
     record = manager.create_session(cwd=tmp_path, model="fake-model")
     session = FakeSession(tmp_path, manager=manager)
     session.session_id = record.id

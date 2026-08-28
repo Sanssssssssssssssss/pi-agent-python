@@ -9,8 +9,7 @@ import pytest
 from PIL import Image
 
 from conftest import isolate_home
-from pi_event_helpers import assistant_done, assistant_error, assistant_start
-from tau_agent import (
+from pi_agent import (
     AgentMessage,
     AgentTool,
     AgentToolResult,
@@ -25,9 +24,9 @@ from tau_agent import (
     Usage,
     UserMessage,
 )
-from tau_agent.messages import AssistantMessageDiagnostic, assistant_content
-from tau_agent.provider_events import AssistantErrorEvent
-from tau_agent.session import (
+from pi_agent.messages import AssistantMessageDiagnostic, assistant_content
+from pi_agent.provider_events import AssistantErrorEvent
+from pi_agent.session import (
     CompactionEntry,
     CustomEntry,
     JsonlSessionStorage,
@@ -38,43 +37,44 @@ from tau_agent.session import (
     SessionInfoEntry,
     ThinkingLevelChangeEntry,
 )
-from tau_ai import CancellationToken, FakeProvider, ModelProvider, RuntimeModelLimits
-from tau_ai.events import AssistantMessageEvent
-from tau_coding import (
+from pi_ai import CancellationToken, FakeProvider, ModelProvider, RuntimeModelLimits
+from pi_ai.events import AssistantMessageEvent
+from pi_coding import (
     CodingSession,
     CodingSessionConfig,
     FileCredentialStore,
     ModelChoice,
     OpenAICodexProviderConfig,
     OpenAICompatibleProviderConfig,
+    PiPaths,
+    PiResourcePaths,
     ProviderConfigError,
     ProviderSettings,
     ResourceError,
     ScopedModelConfig,
     SessionManager,
     SessionTreeBranchResult,
-    TauPaths,
-    TauResourcePaths,
     load_provider_settings,
     save_provider_settings,
 )
-from tau_coding import session as coding_session_module
-from tau_coding.events import AgentSettledEvent, QueueUpdateEvent
-from tau_coding.extensions import (
+from pi_coding import session as coding_session_module
+from pi_coding.events import AgentSettledEvent, QueueUpdateEvent
+from pi_coding.extensions import (
     BeforeAgentStartOutcome,
     DynamicProvider,
     OpenAICompatibleTransport,
     ProviderModel,
 )
-from tau_coding.extensions.runtime import InputHookOutcome
-from tau_coding.prompt_templates import PromptTemplate
-from tau_coding.provider_config import ProviderModelMetadata
-from tau_coding.session import (
+from pi_coding.extensions.runtime import InputHookOutcome
+from pi_coding.prompt_templates import PromptTemplate
+from pi_coding.provider_config import ProviderModelMetadata
+from pi_coding.session import (
     _find_pi_compaction_cut,
     _ordered_tree_entries,
     is_retryable_huggingface_route_error,
     parse_terminal_command,
 )
+from pi_event_helpers import assistant_done, assistant_error, assistant_start
 
 
 async def _collect_session_events(session_stream: object) -> list[object]:
@@ -112,7 +112,7 @@ def _config(
     return CodingSessionConfig(
         provider=provider,
         model="fake",
-        system="You are Tau.",
+        system="You are Pi.",
         storage=storage,
         cwd=tmp_path,
     )
@@ -332,7 +332,7 @@ async def test_load_empty_session_defers_transcript_file(tmp_path: Path) -> None
 
 @pytest.mark.anyio
 async def test_session_export_defaults_to_cwd(tmp_path: Path) -> None:
-    storage = JsonlSessionStorage(tmp_path / ".tau" / "sessions" / "session-1.jsonl")
+    storage = JsonlSessionStorage(tmp_path / ".pi-agent" / "sessions" / "session-1.jsonl")
     session = await CodingSession.load(_config(tmp_path, FakeProvider([]), storage))
     await storage.append(MessageEntry(id="root", message=UserMessage(content="Export me")))
 
@@ -343,12 +343,12 @@ async def test_session_export_defaults_to_cwd(tmp_path: Path) -> None:
     assert "Export me" in html
     assert str(storage.path) in html
     assert '<details class="system-prompt">' in html
-    assert "You are Tau." in html
+    assert "You are Pi." in html
 
 
 @pytest.mark.anyio
 async def test_session_export_writes_jsonl_to_destination_directory(tmp_path: Path) -> None:
-    storage = JsonlSessionStorage(tmp_path / ".tau" / "sessions" / "session-1.jsonl")
+    storage = JsonlSessionStorage(tmp_path / ".pi-agent" / "sessions" / "session-1.jsonl")
     session = await CodingSession.load(_config(tmp_path, FakeProvider([]), storage))
     await storage.append(MessageEntry(id="root", message=UserMessage(content="Export me")))
 
@@ -357,30 +357,30 @@ async def test_session_export_writes_jsonl_to_destination_directory(tmp_path: Pa
     assert output_path == tmp_path / "exports" / "session-1.jsonl"
     jsonl = output_path.read_text(encoding="utf-8")
     assert "Export me" in jsonl
-    assert "You are Tau." not in jsonl
+    assert "You are Pi." not in jsonl
     assert "system_prompt" not in jsonl
 
 
 @pytest.mark.anyio
 async def test_prompt_logs_unexpected_agent_call_exception(tmp_path: Path) -> None:
     storage = JsonlSessionStorage(tmp_path / "session.jsonl")
-    tau_paths = TauPaths(home=tmp_path / "tau-home", agents_home=tmp_path / "agents-home")
+    pi_paths = PiPaths(home=tmp_path / "pi-home", agents_home=tmp_path / "agents-home")
     session = await CodingSession.load(
         CodingSessionConfig(
             provider=RaisingProvider(),
             model="fake",
-            system="You are Tau.",
+            system="You are Pi.",
             storage=storage,
             cwd=tmp_path,
             provider_name="fake-provider",
             session_id="session-1",
-            resource_paths=TauResourcePaths(root=tau_paths.home, paths=tau_paths),
+            resource_paths=PiResourcePaths(root=pi_paths.home, paths=pi_paths),
         )
     )
 
     events = await _collect_session_events(session.prompt("Hello"))
 
-    log_path = tau_paths.agent_calls_log_path
+    log_path = pi_paths.agent_calls_log_path
     assert session.last_diagnostic_log_path == log_path
     entry = json.loads(log_path.read_text(encoding="utf-8").splitlines()[-1])
     assert entry["kind"] == "assistant_error"
@@ -403,7 +403,7 @@ async def test_prompt_logs_unexpected_agent_call_exception(tmp_path: Path) -> No
 @pytest.mark.anyio
 async def test_prompt_logs_error_event_diagnostic_data(tmp_path: Path) -> None:
     storage = JsonlSessionStorage(tmp_path / "session.jsonl")
-    tau_paths = TauPaths(home=tmp_path / "tau-home", agents_home=tmp_path / "agents-home")
+    pi_paths = PiPaths(home=tmp_path / "pi-home", agents_home=tmp_path / "agents-home")
     provider = FakeProvider(
         [
             [
@@ -418,19 +418,19 @@ async def test_prompt_logs_error_event_diagnostic_data(tmp_path: Path) -> None:
         CodingSessionConfig(
             provider=provider,
             model="fake",
-            system="You are Tau.",
+            system="You are Pi.",
             storage=storage,
             cwd=tmp_path,
             provider_name="fake-provider",
             session_id="session-1",
-            resource_paths=TauResourcePaths(root=tau_paths.home, paths=tau_paths),
+            resource_paths=PiResourcePaths(root=pi_paths.home, paths=pi_paths),
         )
     )
 
     await _collect_session_events(session.prompt("Hello"))
 
     assert provider.session_ids == ["session-1"]
-    log_path = tau_paths.agent_calls_log_path
+    log_path = pi_paths.agent_calls_log_path
     assert session.last_diagnostic_log_path == log_path
     entry = json.loads(log_path.read_text(encoding="utf-8").splitlines()[-1])
     assert entry["kind"] == "assistant_error"
@@ -444,7 +444,7 @@ async def test_prompt_logs_error_event_diagnostic_data(tmp_path: Path) -> None:
 @pytest.mark.anyio
 async def test_prompt_logs_safe_provider_stream_error_details(tmp_path: Path) -> None:
     storage = JsonlSessionStorage(tmp_path / "session.jsonl")
-    tau_paths = TauPaths(home=tmp_path / "tau-home", agents_home=tmp_path / "agents-home")
+    pi_paths = PiPaths(home=tmp_path / "pi-home", agents_home=tmp_path / "agents-home")
     error = AssistantMessage(
         stop_reason="error",
         error_message="Our servers are currently overloaded. Please try again later.",
@@ -472,19 +472,19 @@ async def test_prompt_logs_safe_provider_stream_error_details(tmp_path: Path) ->
         CodingSessionConfig(
             provider=provider,
             model="fake",
-            system="You are Tau.",
+            system="You are Pi.",
             storage=storage,
             cwd=tmp_path,
             provider_name="openai-codex",
             session_id="session-1",
-            resource_paths=TauResourcePaths(root=tau_paths.home, paths=tau_paths),
+            resource_paths=PiResourcePaths(root=pi_paths.home, paths=pi_paths),
             retry_enabled=False,
         )
     )
 
     await _collect_session_events(session.prompt("Hello"))
 
-    log_path = tau_paths.agent_calls_log_path
+    log_path = pi_paths.agent_calls_log_path
     entry = json.loads(log_path.read_text(encoding="utf-8").splitlines()[-1])
     assert entry["kind"] == "assistant_error"
     assert entry["error"] == {
@@ -557,7 +557,7 @@ async def test_message_persistence_retry_is_idempotent(tmp_path: Path, phase: st
         CodingSessionConfig(
             provider=FakeProvider([]),
             model="fake",
-            system="You are Tau.",
+            system="You are Pi.",
             storage=storage,
             cwd=tmp_path,
         )
@@ -575,7 +575,7 @@ async def test_message_persistence_retry_is_idempotent(tmp_path: Path, phase: st
         CodingSessionConfig(
             provider=FakeProvider([]),
             model="fake",
-            system="You are Tau.",
+            system="You are Pi.",
             storage=storage,
             cwd=tmp_path,
         )
@@ -593,7 +593,7 @@ async def test_next_prompt_flushes_a_repair_that_failed_twice(tmp_path: Path) ->
         CodingSessionConfig(
             provider=provider,
             model="fake",
-            system="You are Tau.",
+            system="You are Pi.",
             storage=storage,
             cwd=tmp_path,
         )
@@ -620,7 +620,7 @@ async def test_clean_persist_reads_storage_once_per_message(tmp_path: Path) -> N
                 [[assistant_start(), assistant_done(AssistantMessage(content="Hi."))]]
             ),
             model="fake",
-            system="You are Tau.",
+            system="You are Pi.",
             storage=storage,
             cwd=tmp_path,
         )
@@ -643,7 +643,7 @@ async def test_reconcile_persistence_failure_is_logged(tmp_path: Path) -> None:
         CodingSessionConfig(
             provider=FakeProvider([]),
             model="fake",
-            system="You are Tau.",
+            system="You are Pi.",
             storage=storage,
             cwd=tmp_path,
         )
@@ -801,7 +801,7 @@ async def test_cancelled_prompt_teardown_persists_interrupted_tool_result(
         CodingSessionConfig(
             provider=provider,
             model="fake",
-            system="You are Tau.",
+            system="You are Pi.",
             storage=storage,
             cwd=tmp_path,
             tools=[_hang_tool(tool_started, release)],
@@ -1013,7 +1013,7 @@ async def test_load_persists_repair_for_session_with_interrupted_tail_tool_call(
         CodingSessionConfig(
             provider=provider,
             model="fake",
-            system="You are Tau.",
+            system="You are Pi.",
             storage=storage,
             cwd=tmp_path,
         )
@@ -1084,7 +1084,7 @@ async def test_load_preserves_orphaned_tool_result(tmp_path: Path) -> None:
         CodingSessionConfig(
             provider=FakeProvider([]),
             model="fake",
-            system="You are Tau.",
+            system="You are Pi.",
             storage=storage,
             cwd=tmp_path,
         )
@@ -1106,7 +1106,7 @@ async def test_load_preserves_orphaned_tool_result(tmp_path: Path) -> None:
     diagnostics = [
         entry
         for entry in (await storage.read_all())
-        if isinstance(entry, CustomEntry) and entry.namespace == "tau.session-history-repair"
+        if isinstance(entry, CustomEntry) and entry.namespace == "pi.session-history-repair"
     ]
     assert diagnostics == []
 
@@ -1114,7 +1114,7 @@ async def test_load_preserves_orphaned_tool_result(tmp_path: Path) -> None:
         CodingSessionConfig(
             provider=FakeProvider([]),
             model="fake",
-            system="You are Tau.",
+            system="You are Pi.",
             storage=storage,
             cwd=tmp_path,
         )
@@ -1123,7 +1123,7 @@ async def test_load_preserves_orphaned_tool_result(tmp_path: Path) -> None:
     diagnostics = [
         entry
         for entry in (await storage.read_all())
-        if isinstance(entry, CustomEntry) and entry.namespace == "tau.session-history-repair"
+        if isinstance(entry, CustomEntry) and entry.namespace == "pi.session-history-repair"
     ]
     assert diagnostics == []
 
@@ -1153,7 +1153,7 @@ async def test_load_persists_repair_for_historical_interrupted_tool_call(
         CodingSessionConfig(
             provider=provider,
             model="fake",
-            system="You are Tau.",
+            system="You are Pi.",
             storage=storage,
             cwd=tmp_path,
         )
@@ -1190,7 +1190,7 @@ async def test_load_persists_repair_for_historical_interrupted_tool_call(
         CodingSessionConfig(
             provider=FakeProvider([]),
             model="fake",
-            system="You are Tau.",
+            system="You are Pi.",
             storage=storage,
             cwd=tmp_path,
         )
@@ -1250,7 +1250,7 @@ async def test_terminal_command_can_persist_output_to_context(tmp_path: Path) ->
     storage = JsonlSessionStorage(tmp_path / "session.jsonl")
     session = await CodingSession.load(_config(tmp_path, FakeProvider([]), storage))
     command = (
-        'powershell -NoProfile -Command "[Console]::Write(\'hello\')"'
+        "powershell -NoProfile -Command \"[Console]::Write('hello')\""
         if sys.platform == "win32"
         else "printf hello"
     )
@@ -1273,7 +1273,7 @@ async def test_terminal_command_can_run_without_context(tmp_path: Path) -> None:
     storage = JsonlSessionStorage(tmp_path / "session.jsonl")
     session = await CodingSession.load(_config(tmp_path, FakeProvider([]), storage))
     command = (
-        'powershell -NoProfile -Command "[Console]::Write(\'hidden\')"'
+        "powershell -NoProfile -Command \"[Console]::Write('hidden')\""
         if sys.platform == "win32"
         else "printf hidden"
     )
@@ -1301,7 +1301,7 @@ async def test_terminal_command_uses_configured_shell_command_prefix(tmp_path: P
         CodingSessionConfig(
             provider=FakeProvider([]),
             model="fake",
-            system="You are Tau.",
+            system="You are Pi.",
             storage=storage,
             cwd=tmp_path,
             shell_command_prefix="shopt -s expand_aliases\nalias greet='printf terminal-alias'",
@@ -1322,7 +1322,7 @@ async def test_agent_bash_tool_uses_configured_shell_command_prefix(tmp_path: Pa
         CodingSessionConfig(
             provider=FakeProvider([]),
             model="fake",
-            system="You are Tau.",
+            system="You are Pi.",
             storage=storage,
             cwd=tmp_path,
             shell_command_prefix="shopt -s expand_aliases\nalias greet='printf agent-alias'",
@@ -1414,7 +1414,7 @@ async def test_tree_can_branch_from_first_user_message_before_assistant_response
     await provider.started.wait()
 
     choices = await session.tree_choices()
-    with pytest.raises(RuntimeError, match="Tau is still working"):
+    with pytest.raises(RuntimeError, match="Pi is still working"):
         await session.branch_to_entry(choices[0].entry_id)
 
     session.cancel()
@@ -1541,7 +1541,7 @@ async def test_branch_to_entry_preserves_orphaned_tool_result(tmp_path: Path) ->
         CodingSessionConfig(
             provider=FakeProvider([]),
             model="fake",
-            system="You are Tau.",
+            system="You are Pi.",
             storage=storage,
             cwd=tmp_path,
         )
@@ -1557,7 +1557,7 @@ async def test_branch_to_entry_preserves_orphaned_tool_result(tmp_path: Path) ->
     diagnostics = [
         entry
         for entry in (await storage.read_all())
-        if isinstance(entry, CustomEntry) and entry.namespace == "tau.session-history-repair"
+        if isinstance(entry, CustomEntry) and entry.namespace == "pi.session-history-repair"
     ]
     assert diagnostics == []
 
@@ -1711,7 +1711,7 @@ async def test_session_updates_read_image_behavior_when_model_changes(
         CodingSessionConfig(
             provider=FakeProvider([]),
             model="text-only",
-            system="You are Tau.",
+            system="You are Pi.",
             storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
             cwd=tmp_path,
             provider_name="openai",
@@ -1752,7 +1752,7 @@ async def test_session_uses_active_model_thinking_capabilities(
         CodingSessionConfig(
             provider=FakeProvider([]),
             model="reasoner",
-            system="You are Tau.",
+            system="You are Pi.",
             storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
             cwd=tmp_path,
             provider_name="openai",
@@ -1790,7 +1790,7 @@ async def test_session_reports_dynamic_model_thinking_controls_separately_from_o
         CodingSessionConfig(
             provider=FakeProvider([]),
             model="reasoner",
-            system="You are Tau.",
+            system="You are Pi.",
             storage=JsonlSessionStorage(tmp_path / "dynamic-session.jsonl"),
             cwd=tmp_path,
             provider_name="local",
@@ -1831,7 +1831,7 @@ async def test_session_reports_dynamic_model_thinking_controls_separately_from_o
 
 @pytest.mark.anyio
 async def test_session_persists_thinking_preference_for_new_sessions(tmp_path: Path) -> None:
-    tau_paths = TauPaths(home=tmp_path / ".tau")
+    pi_paths = PiPaths(home=tmp_path / ".pi-agent")
     provider_config = OpenAICodexProviderConfig(
         thinking_levels=("off", "minimal", "low", "medium", "high", "xhigh"),
         thinking_models=("gpt-5.5",),
@@ -1847,31 +1847,31 @@ async def test_session_persists_thinking_preference_for_new_sessions(tmp_path: P
         CodingSessionConfig(
             provider=FakeProvider([]),
             model="gpt-5.5",
-            system="You are Tau.",
+            system="You are Pi.",
             storage=storage,
             cwd=tmp_path,
             provider_name="openai-codex",
             provider_settings=settings,
-            resource_paths=TauResourcePaths(root=tau_paths.home, paths=tau_paths),
+            resource_paths=PiResourcePaths(root=pi_paths.home, paths=pi_paths),
         )
     )
 
     assert session.thinking_level == "medium"
     assert await session.set_thinking_level("low") == "Thinking mode: low"
 
-    saved = load_provider_settings(tau_paths)
+    saved = load_provider_settings(pi_paths)
     assert saved.get_provider("openai-codex").thinking_defaults == {"gpt-5.5": "low"}
 
     new_session = await CodingSession.load(
         CodingSessionConfig(
             provider=FakeProvider([]),
             model="gpt-5.5",
-            system="You are Tau.",
+            system="You are Pi.",
             storage=JsonlSessionStorage(tmp_path / "new-codex-session.jsonl"),
             cwd=tmp_path,
             provider_name="openai-codex",
             provider_settings=saved,
-            resource_paths=TauResourcePaths(root=tau_paths.home, paths=tau_paths),
+            resource_paths=PiResourcePaths(root=pi_paths.home, paths=pi_paths),
         )
     )
 
@@ -1907,7 +1907,7 @@ async def test_resumed_session_history_overrides_saved_thinking_preference(
         CodingSessionConfig(
             provider=FakeProvider([]),
             model="reasoner",
-            system="You are Tau.",
+            system="You are Pi.",
             storage=storage,
             cwd=tmp_path,
             provider_name="openai",
@@ -1932,7 +1932,7 @@ async def test_session_uses_codex_subscription_thinking_capabilities(
         CodingSessionConfig(
             provider=FakeProvider([]),
             model="gpt-5.5",
-            system="You are Tau.",
+            system="You are Pi.",
             storage=JsonlSessionStorage(tmp_path / "codex-session.jsonl"),
             cwd=tmp_path,
             provider_name="openai-codex",
@@ -1983,7 +1983,7 @@ async def test_session_refreshes_runtime_provider_for_thinking_level(
         CodingSessionConfig(
             provider=FakeProvider([]),
             model="reasoner",
-            system="You are Tau.",
+            system="You are Pi.",
             storage=JsonlSessionStorage(tmp_path / "runtime-session.jsonl"),
             cwd=tmp_path,
             provider_name="openai",
@@ -2611,7 +2611,7 @@ async def test_session_builds_system_prompt_when_system_is_omitted(tmp_path: Pat
         storage=storage,
         cwd=tmp_path,
         trust_default="always",
-        resource_paths=TauResourcePaths(root=resource_root, agents_root=None),
+        resource_paths=PiResourcePaths(root=resource_root, agents_root=None),
     )
     session = await CodingSession.load(config)
 
@@ -2628,7 +2628,7 @@ async def test_session_builds_system_prompt_when_system_is_omitted(tmp_path: Pat
 @pytest.mark.anyio
 async def test_session_touches_session_manager_after_persisting_messages(tmp_path: Path) -> None:
     storage = JsonlSessionStorage(tmp_path / "session.jsonl")
-    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    manager = SessionManager(PiPaths(home=tmp_path / ".pi-agent", agents_home=tmp_path / ".agents"))
     record = manager.create_session(cwd=tmp_path, model="fake")
     provider = FakeProvider(
         [
@@ -2645,12 +2645,12 @@ async def test_session_touches_session_manager_after_persisting_messages(tmp_pat
     config = CodingSessionConfig(
         provider=provider,
         model="fake",
-        system="You are Tau.",
+        system="You are Pi.",
         storage=storage,
         cwd=tmp_path,
         session_id=record.id,
         session_manager=manager,
-        resource_paths=TauResourcePaths(root=tmp_path / "resources", agents_root=None),
+        resource_paths=PiResourcePaths(root=tmp_path / "resources", agents_root=None),
     )
     session = await CodingSession.load(config)
 
@@ -2664,7 +2664,7 @@ async def test_session_touches_session_manager_after_persisting_messages(tmp_pat
 @pytest.mark.anyio
 async def test_session_auto_names_first_unnamed_managed_session(tmp_path: Path) -> None:
     storage = JsonlSessionStorage(tmp_path / "session.jsonl")
-    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    manager = SessionManager(PiPaths(home=tmp_path / ".pi-agent", agents_home=tmp_path / ".agents"))
     record = manager.create_session(cwd=tmp_path, model="fake")
     provider = FakeProvider(
         [
@@ -2682,7 +2682,7 @@ async def test_session_auto_names_first_unnamed_managed_session(tmp_path: Path) 
         CodingSessionConfig(
             provider=provider,
             model="fake",
-            system="You are Tau.",
+            system="You are Pi.",
             storage=storage,
             cwd=tmp_path,
             session_id=record.id,
@@ -2706,7 +2706,7 @@ async def test_session_auto_names_first_unnamed_managed_session(tmp_path: Path) 
 @pytest.mark.anyio
 async def test_session_yields_expanded_custom_prompt_before_auto_naming(tmp_path: Path) -> None:
     storage = JsonlSessionStorage(tmp_path / "session.jsonl")
-    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    manager = SessionManager(PiPaths(home=tmp_path / ".pi-agent", agents_home=tmp_path / ".agents"))
     record = manager.create_session(cwd=tmp_path, model="fake")
     resources_root = tmp_path / "resources"
     prompts_dir = resources_root / "prompts"
@@ -2728,12 +2728,12 @@ async def test_session_yields_expanded_custom_prompt_before_auto_naming(tmp_path
         CodingSessionConfig(
             provider=provider,
             model="fake",
-            system="You are Tau.",
+            system="You are Pi.",
             storage=storage,
             cwd=tmp_path,
             session_id=record.id,
             session_manager=manager,
-            resource_paths=TauResourcePaths(root=resources_root, agents_root=None),
+            resource_paths=PiResourcePaths(root=resources_root, agents_root=None),
         )
     )
 
@@ -2756,7 +2756,7 @@ async def test_session_yields_expanded_custom_prompt_before_auto_naming(tmp_path
 @pytest.mark.anyio
 async def test_session_auto_name_falls_back_when_provider_fails(tmp_path: Path) -> None:
     storage = JsonlSessionStorage(tmp_path / "session.jsonl")
-    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    manager = SessionManager(PiPaths(home=tmp_path / ".pi-agent", agents_home=tmp_path / ".agents"))
     record = manager.create_session(cwd=tmp_path, model="fake")
     provider = FakeProvider(
         [
@@ -2773,7 +2773,7 @@ async def test_session_auto_name_falls_back_when_provider_fails(tmp_path: Path) 
         CodingSessionConfig(
             provider=provider,
             model="fake",
-            system="You are Tau.",
+            system="You are Pi.",
             storage=storage,
             cwd=tmp_path,
             session_id=record.id,
@@ -2800,7 +2800,7 @@ async def test_session_auto_name_falls_back_when_provider_returns_unusable_title
     tmp_path: Path,
 ) -> None:
     storage = JsonlSessionStorage(tmp_path / "session.jsonl")
-    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    manager = SessionManager(PiPaths(home=tmp_path / ".pi-agent", agents_home=tmp_path / ".agents"))
     record = manager.create_session(cwd=tmp_path, model="fake")
     provider = FakeProvider(
         [
@@ -2818,7 +2818,7 @@ async def test_session_auto_name_falls_back_when_provider_returns_unusable_title
         CodingSessionConfig(
             provider=provider,
             model="fake",
-            system="You are Tau.",
+            system="You are Pi.",
             storage=storage,
             cwd=tmp_path,
             session_id=record.id,
@@ -2836,7 +2836,7 @@ async def test_session_auto_name_falls_back_when_provider_returns_unusable_title
 @pytest.mark.anyio
 async def test_session_auto_name_does_not_overwrite_manual_name(tmp_path: Path) -> None:
     storage = JsonlSessionStorage(tmp_path / "session.jsonl")
-    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    manager = SessionManager(PiPaths(home=tmp_path / ".pi-agent", agents_home=tmp_path / ".agents"))
     record = manager.create_session(cwd=tmp_path, model="fake", title="Manual name")
     provider = FakeProvider(
         [
@@ -2850,7 +2850,7 @@ async def test_session_auto_name_does_not_overwrite_manual_name(tmp_path: Path) 
         CodingSessionConfig(
             provider=provider,
             model="fake",
-            system="You are Tau.",
+            system="You are Pi.",
             storage=storage,
             cwd=tmp_path,
             session_id=record.id,
@@ -2871,14 +2871,14 @@ async def test_manual_name_wins_while_auto_name_is_in_flight(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     storage = JsonlSessionStorage(tmp_path / "session.jsonl")
-    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    manager = SessionManager(PiPaths(home=tmp_path / ".pi-agent", agents_home=tmp_path / ".agents"))
     record = manager.create_session(cwd=tmp_path, model="fake")
     provider = WaitingProvider()
     session = await CodingSession.load(
         CodingSessionConfig(
             provider=provider,
             model="fake",
-            system="You are Tau.",
+            system="You are Pi.",
             storage=storage,
             cwd=tmp_path,
             session_id=record.id,
@@ -2914,7 +2914,7 @@ async def test_session_auto_name_does_not_index_new_session_before_first_persist
     tmp_path: Path,
 ) -> None:
     storage = JsonlSessionStorage(tmp_path / "session.jsonl")
-    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    manager = SessionManager(PiPaths(home=tmp_path / ".pi-agent", agents_home=tmp_path / ".agents"))
     record = manager.prepare_session(cwd=tmp_path, model="fake")
     provider = FakeProvider(
         [
@@ -2932,7 +2932,7 @@ async def test_session_auto_name_does_not_index_new_session_before_first_persist
         CodingSessionConfig(
             provider=provider,
             model="fake",
-            system="You are Tau.",
+            system="You are Pi.",
             storage=storage,
             cwd=record.cwd,
             session_id=record.id,
@@ -2969,10 +2969,10 @@ async def test_session_loads_and_expands_skills(tmp_path: Path) -> None:
     config = CodingSessionConfig(
         provider=provider,
         model="fake",
-        system="You are Tau.",
+        system="You are Pi.",
         storage=storage,
         cwd=tmp_path,
-        resource_paths=TauResourcePaths(root=resource_root, agents_root=None),
+        resource_paths=PiResourcePaths(root=resource_root, agents_root=None),
     )
     session = await CodingSession.load(config)
 
@@ -3011,7 +3011,7 @@ async def test_session_skills_disabled_suppresses_skill_index(tmp_path: Path) ->
         cwd=tmp_path,
         trust_default="always",
         skills_enabled=False,
-        resource_paths=TauResourcePaths(root=resource_root, agents_root=None),
+        resource_paths=PiResourcePaths(root=resource_root, agents_root=None),
     )
     session = await CodingSession.load(config)
 
@@ -3044,7 +3044,7 @@ async def test_session_reload_preserves_disabled_skills(tmp_path: Path) -> None:
             storage=storage,
             cwd=tmp_path,
             skills_enabled=False,
-            resource_paths=TauResourcePaths(root=resource_root, agents_root=None),
+            resource_paths=PiResourcePaths(root=resource_root, agents_root=None),
         )
     )
 
@@ -3066,7 +3066,7 @@ async def test_system_command_shows_prompt_without_persisting_or_adding_context(
         CodingSessionConfig(
             provider=provider,
             model="fake",
-            system="You are Tau.",
+            system="You are Pi.",
             storage=storage,
             cwd=tmp_path,
         )
@@ -3078,7 +3078,7 @@ async def test_system_command_shows_prompt_without_persisting_or_adding_context(
     result = session.handle_command("/system")
 
     assert result.handled is True
-    assert result.message == "You are Tau."
+    assert result.message == "You are Pi."
     assert session.messages == before_messages
     assert await storage.read_all() == before_entries
     assert provider.calls == []
@@ -3105,10 +3105,10 @@ async def test_session_expands_prompt_templates_as_slash_commands(tmp_path: Path
     config = CodingSessionConfig(
         provider=provider,
         model="fake",
-        system="You are Tau.",
+        system="You are Pi.",
         storage=storage,
         cwd=tmp_path,
-        resource_paths=TauResourcePaths(root=resource_root, agents_root=None),
+        resource_paths=PiResourcePaths(root=resource_root, agents_root=None),
     )
     session = await CodingSession.load(config)
 
@@ -3131,10 +3131,10 @@ async def test_reserved_prompts_template_cannot_shadow_picker_command(tmp_path: 
         CodingSessionConfig(
             provider=FakeProvider([]),
             model="fake",
-            system="You are Tau.",
+            system="You are Pi.",
             storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
             cwd=tmp_path,
-            resource_paths=TauResourcePaths(root=resource_root, agents_root=None),
+            resource_paths=PiResourcePaths(root=resource_root, agents_root=None),
         )
     )
 
@@ -3161,10 +3161,10 @@ async def test_reserved_tools_template_cannot_shadow_picker_command(tmp_path: Pa
         CodingSessionConfig(
             provider=FakeProvider([]),
             model="fake",
-            system="You are Tau.",
+            system="You are Pi.",
             storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
             cwd=tmp_path,
-            resource_paths=TauResourcePaths(root=resource_root, agents_root=None),
+            resource_paths=PiResourcePaths(root=resource_root, agents_root=None),
         )
     )
 
@@ -3215,7 +3215,7 @@ async def test_session_skill_index_lets_agent_read_relevant_skill_file(tmp_path:
             model="fake",
             storage=storage,
             cwd=tmp_path,
-            resource_paths=TauResourcePaths(root=resource_root, agents_root=None),
+            resource_paths=PiResourcePaths(root=resource_root, agents_root=None),
         )
     )
 
@@ -3252,10 +3252,10 @@ async def test_session_loads_with_resource_diagnostics_instead_of_failing(
     config = CodingSessionConfig(
         provider=FakeProvider([]),
         model="fake",
-        system="You are Tau.",
+        system="You are Pi.",
         storage=storage,
         cwd=tmp_path,
-        resource_paths=TauResourcePaths(root=resource_root, agents_root=None),
+        resource_paths=PiResourcePaths(root=resource_root, agents_root=None),
     )
 
     session = await CodingSession.load(config)
@@ -3267,15 +3267,15 @@ async def test_session_loads_with_resource_diagnostics_instead_of_failing(
 
 
 @pytest.mark.anyio
-async def test_session_loads_tau_native_system_prompt_files(tmp_path: Path) -> None:
-    tau_home = tmp_path / "tau-home"
-    project_tau = tmp_path / ".tau"
-    tau_home.mkdir()
-    project_tau.mkdir()
-    (tau_home / "SYSTEM.md").write_text("User base", encoding="utf-8")
-    (project_tau / "SYSTEM.md").write_text("Project base", encoding="utf-8")
-    (tau_home / "APPEND_SYSTEM.md").write_text("User append", encoding="utf-8")
-    (project_tau / "APPEND_SYSTEM.md").write_text("Project append", encoding="utf-8")
+async def test_session_loads_pi_native_system_prompt_files(tmp_path: Path) -> None:
+    pi_home = tmp_path / "pi-home"
+    project_pi = tmp_path / ".pi-agent"
+    pi_home.mkdir()
+    project_pi.mkdir()
+    (pi_home / "SYSTEM.md").write_text("User base", encoding="utf-8")
+    (project_pi / "SYSTEM.md").write_text("Project base", encoding="utf-8")
+    (pi_home / "APPEND_SYSTEM.md").write_text("User append", encoding="utf-8")
+    (project_pi / "APPEND_SYSTEM.md").write_text("Project append", encoding="utf-8")
     (tmp_path / "AGENTS.md").write_text("Project instructions", encoding="utf-8")
 
     session = await CodingSession.load(
@@ -3285,7 +3285,7 @@ async def test_session_loads_tau_native_system_prompt_files(tmp_path: Path) -> N
             storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
             cwd=tmp_path,
             trust_default="always",
-            resource_paths=TauResourcePaths(root=tau_home, agents_root=None),
+            resource_paths=PiResourcePaths(root=pi_home, agents_root=None),
         )
     )
 
@@ -3298,8 +3298,8 @@ async def test_session_loads_tau_native_system_prompt_files(tmp_path: Path) -> N
         in session.system_prompt.casefold()
     )
     assert session.system_prompt_files == (
-        project_tau / "SYSTEM.md",
-        project_tau / "APPEND_SYSTEM.md",
+        project_pi / "SYSTEM.md",
+        project_pi / "APPEND_SYSTEM.md",
     )
     prompt_diagnostics = [
         item for item in session.resource_diagnostics if item.kind == "system-prompt"
@@ -3353,13 +3353,13 @@ async def test_before_agent_start_system_override_is_per_run(
 async def test_explicit_base_overrides_file_while_explicit_append_composes(
     tmp_path: Path,
 ) -> None:
-    tau_home = tmp_path / "tau-home"
-    project_tau = tmp_path / ".tau"
-    tau_home.mkdir()
-    project_tau.mkdir()
-    (tau_home / "SYSTEM.md").write_bytes(b"\xff")
-    (tau_home / "APPEND_SYSTEM.md").write_text("User append", encoding="utf-8")
-    (project_tau / "APPEND_SYSTEM.md").write_text("Project append", encoding="utf-8")
+    pi_home = tmp_path / "pi-home"
+    project_pi = tmp_path / ".pi-agent"
+    pi_home.mkdir()
+    project_pi.mkdir()
+    (pi_home / "SYSTEM.md").write_bytes(b"\xff")
+    (pi_home / "APPEND_SYSTEM.md").write_text("User append", encoding="utf-8")
+    (project_pi / "APPEND_SYSTEM.md").write_text("Project append", encoding="utf-8")
 
     session = await CodingSession.load(
         CodingSessionConfig(
@@ -3367,17 +3367,15 @@ async def test_explicit_base_overrides_file_while_explicit_append_composes(
             model="fake",
             storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
             cwd=tmp_path,
-            resource_paths=TauResourcePaths(root=tau_home, agents_root=None),
+            resource_paths=PiResourcePaths(root=pi_home, agents_root=None),
             trust_default="always",
             custom_system_prompt="Explicit base",
             append_system_prompt="Explicit append",
         )
     )
 
-    assert session.system_prompt.startswith(
-        "Explicit base\n\nProject append\n\nExplicit append"
-    )
-    assert session.system_prompt_files == (project_tau / "APPEND_SYSTEM.md",)
+    assert session.system_prompt.startswith("Explicit base\n\nProject append\n\nExplicit append")
+    assert session.system_prompt_files == (project_pi / "APPEND_SYSTEM.md",)
     prompt_diagnostics = [
         item for item in session.resource_diagnostics if item.kind == "system-prompt"
     ]
@@ -3387,13 +3385,13 @@ async def test_explicit_base_overrides_file_while_explicit_append_composes(
 
 @pytest.mark.anyio
 async def test_session_reload_tracks_system_prompt_file_precedence(tmp_path: Path) -> None:
-    tau_home = tmp_path / "tau-home"
-    project_tau = tmp_path / ".tau"
-    tau_home.mkdir()
-    project_tau.mkdir()
-    user_prompt = tau_home / "SYSTEM.md"
-    project_prompt = project_tau / "SYSTEM.md"
-    append_prompt = tau_home / "APPEND_SYSTEM.md"
+    pi_home = tmp_path / "pi-home"
+    project_pi = tmp_path / ".pi-agent"
+    pi_home.mkdir()
+    project_pi.mkdir()
+    user_prompt = pi_home / "SYSTEM.md"
+    project_prompt = project_pi / "SYSTEM.md"
+    append_prompt = pi_home / "APPEND_SYSTEM.md"
     session = await CodingSession.load(
         CodingSessionConfig(
             provider=FakeProvider([]),
@@ -3401,10 +3399,10 @@ async def test_session_reload_tracks_system_prompt_file_precedence(tmp_path: Pat
             storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
             cwd=tmp_path,
             trust_default="always",
-            resource_paths=TauResourcePaths(root=tau_home, agents_root=None),
+            resource_paths=PiResourcePaths(root=pi_home, agents_root=None),
         )
     )
-    assert "You are an expert coding assistant operating inside Tau" in session.system_prompt
+    assert "You are an expert coding assistant operating inside Pi" in session.system_prompt
 
     user_prompt.write_text("User base", encoding="utf-8")
     summary = await session.reload()
@@ -3432,7 +3430,7 @@ async def test_session_reload_tracks_system_prompt_file_precedence(tmp_path: Pat
     user_prompt.unlink()
     await session.reload()
     assert session.system_prompt.startswith(
-        "You are an expert coding assistant operating inside Tau"
+        "You are an expert coding assistant operating inside Pi"
     )
     assert "Reloaded append" in session.system_prompt
 
@@ -3443,9 +3441,9 @@ async def test_session_reload_tracks_system_prompt_file_precedence(tmp_path: Pat
 
 @pytest.mark.anyio
 async def test_failed_system_prompt_file_reload_keeps_previous_prompt(tmp_path: Path) -> None:
-    tau_home = tmp_path / "tau-home"
-    tau_home.mkdir()
-    prompt_path = tau_home / "SYSTEM.md"
+    pi_home = tmp_path / "pi-home"
+    pi_home.mkdir()
+    prompt_path = pi_home / "SYSTEM.md"
     prompt_path.write_text("Valid base", encoding="utf-8")
     session = await CodingSession.load(
         CodingSessionConfig(
@@ -3453,7 +3451,7 @@ async def test_failed_system_prompt_file_reload_keeps_previous_prompt(tmp_path: 
             model="fake",
             storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
             cwd=tmp_path,
-            resource_paths=TauResourcePaths(root=tau_home, agents_root=None),
+            resource_paths=PiResourcePaths(root=pi_home, agents_root=None),
         )
     )
     previous = session.system_prompt
@@ -3467,11 +3465,11 @@ async def test_failed_system_prompt_file_reload_keeps_previous_prompt(tmp_path: 
 
 @pytest.mark.anyio
 async def test_new_session_adopts_system_prompt_resource_tracking(tmp_path: Path) -> None:
-    tau_home = tmp_path / "tau-home"
-    tau_home.mkdir()
-    prompt_path = tau_home / "SYSTEM.md"
+    pi_home = tmp_path / "pi-home"
+    pi_home.mkdir()
+    prompt_path = pi_home / "SYSTEM.md"
     prompt_path.write_text("Base A", encoding="utf-8")
-    manager = SessionManager(TauPaths(home=tau_home, agents_home=tmp_path / "agents-home"))
+    manager = SessionManager(PiPaths(home=pi_home, agents_home=tmp_path / "agents-home"))
     record = manager.create_session(cwd=tmp_path, model="fake")
     session = await CodingSession.load(
         CodingSessionConfig(
@@ -3481,7 +3479,7 @@ async def test_new_session_adopts_system_prompt_resource_tracking(tmp_path: Path
             cwd=tmp_path,
             session_id=record.id,
             session_manager=manager,
-            resource_paths=TauResourcePaths(root=tau_home, agents_root=None),
+            resource_paths=PiResourcePaths(root=pi_home, agents_root=None),
         )
     )
 
@@ -3515,7 +3513,7 @@ async def test_session_reload_refreshes_resources_and_system_prompt(tmp_path: Pa
             storage=storage,
             cwd=tmp_path,
             trust_default="always",
-            resource_paths=TauResourcePaths(root=resource_root, agents_root=None),
+            resource_paths=PiResourcePaths(root=resource_root, agents_root=None),
         )
     )
     assert session.skills == ()
@@ -3564,7 +3562,7 @@ async def test_session_reload_detects_disable_model_invocation_change(tmp_path: 
             storage=storage,
             cwd=tmp_path,
             trust_default="always",
-            resource_paths=TauResourcePaths(root=resource_root, agents_root=None),
+            resource_paths=PiResourcePaths(root=resource_root, agents_root=None),
         )
     )
     assert "<name>testing</name>" in session.system_prompt
@@ -3586,7 +3584,7 @@ async def test_session_reload_skips_provider_settings_refresh(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    def fail_load_provider_settings(paths: TauPaths | None = None) -> ProviderSettings:
+    def fail_load_provider_settings(paths: PiPaths | None = None) -> ProviderSettings:
         del paths
         raise AssertionError("/reload should not refresh provider settings")
 
@@ -3649,10 +3647,10 @@ async def test_session_provider_settings_reload_uses_session_paths(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    tau_paths = TauPaths(home=tmp_path / "tau-home", agents_home=tmp_path / "agents-home")
-    seen_paths: list[TauPaths | None] = []
+    pi_paths = PiPaths(home=tmp_path / "pi-home", agents_home=tmp_path / "agents-home")
+    seen_paths: list[PiPaths | None] = []
 
-    def load_provider_settings(paths: TauPaths | None = None) -> ProviderSettings:
+    def load_provider_settings(paths: PiPaths | None = None) -> ProviderSettings:
         seen_paths.append(paths)
         return ProviderSettings(providers=(OpenAICompatibleProviderConfig(name="openai"),))
 
@@ -3661,19 +3659,19 @@ async def test_session_provider_settings_reload_uses_session_paths(
         CodingSessionConfig(
             provider=FakeProvider([]),
             model="fake",
-            system="You are Tau.",
+            system="You are Pi.",
             storage=JsonlSessionStorage(tmp_path / "provider-reload-session.jsonl"),
             cwd=tmp_path,
             provider_settings=ProviderSettings(
                 providers=(OpenAICompatibleProviderConfig(name="openai"),)
             ),
-            resource_paths=TauResourcePaths(root=tau_paths.home, paths=tau_paths),
+            resource_paths=PiResourcePaths(root=pi_paths.home, paths=pi_paths),
         )
     )
 
     session.reload_provider_settings()
 
-    assert seen_paths == [tau_paths]
+    assert seen_paths == [pi_paths]
 
 
 @pytest.mark.anyio
@@ -3785,7 +3783,7 @@ async def test_session_auto_compacts_after_response_when_threshold_is_exceeded(
         CodingSessionConfig(
             provider=provider,
             model="fake",
-            system="You are Tau.",
+            system="You are Pi.",
             storage=storage,
             cwd=tmp_path,
             auto_compact_token_threshold=1,
@@ -3852,7 +3850,7 @@ async def test_session_auto_compacts_from_provider_reported_usage(
         CodingSessionConfig(
             provider=provider,
             model="fake",
-            system="You are Tau.",
+            system="You are Pi.",
             storage=storage,
             cwd=tmp_path,
             auto_compact_token_threshold=50_000,
@@ -3908,7 +3906,7 @@ async def test_session_auto_compacts_with_pi_style_default_threshold(
         CodingSessionConfig(
             provider=provider,
             model="fake",
-            system="You are Tau.",
+            system="You are Pi.",
             storage=storage,
             cwd=tmp_path,
             provider_name="local",
@@ -3957,7 +3955,7 @@ async def test_session_uses_live_provider_limits_for_compaction_threshold(
         CodingSessionConfig(
             provider=provider,
             model="gpt-5.6-sol",
-            system="You are Tau.",
+            system="You are Pi.",
             storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
             cwd=tmp_path,
             provider_name="openai-codex",
@@ -3992,7 +3990,7 @@ async def test_session_falls_back_when_live_model_limit_discovery_fails(
         CodingSessionConfig(
             provider=provider,
             model="gpt-5.6-sol",
-            system="You are Tau.",
+            system="You are Pi.",
             storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
             cwd=tmp_path,
             provider_name="openai-codex",
@@ -4083,7 +4081,7 @@ async def test_disabled_auto_compaction_does_not_retry_context_overflow(tmp_path
         CodingSessionConfig(
             provider=provider,
             model="fake",
-            system="You are Tau.",
+            system="You are Pi.",
             storage=storage,
             cwd=tmp_path,
             auto_compact_enabled=False,
@@ -4151,7 +4149,7 @@ async def test_session_compacts_and_retries_once_after_recoverable_length(
         CodingSessionConfig(
             provider=provider,
             model="fake",
-            system="You are Tau.",
+            system="You are Pi.",
             storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
             cwd=tmp_path,
             provider_name="openai",
@@ -4201,7 +4199,7 @@ async def test_huggingface_session_pins_successful_automatic_route(
         models=("zai-org/GLM-5.2",),
         default_model="zai-org/GLM-5.2",
     )
-    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    manager = SessionManager(PiPaths(home=tmp_path / ".pi-agent", agents_home=tmp_path / ".agents"))
     record = manager.create_session(
         cwd=tmp_path,
         model="zai-org/GLM-5.2",
@@ -4211,7 +4209,7 @@ async def test_huggingface_session_pins_successful_automatic_route(
         CodingSessionConfig(
             provider=FakeProvider([]),
             model="zai-org/GLM-5.2",
-            system="You are Tau.",
+            system="You are Pi.",
             storage=JsonlSessionStorage(record.path),
             cwd=tmp_path,
             session_id=record.id,
@@ -4325,8 +4323,8 @@ async def test_huggingface_automatic_pin_fails_over_and_repins(
         models=(model,),
         default_model=model,
     )
-    tau_paths = TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents")
-    manager = SessionManager(tau_paths)
+    pi_paths = PiPaths(home=tmp_path / ".pi-agent", agents_home=tmp_path / ".agents")
+    manager = SessionManager(pi_paths)
     record = manager.create_session(
         cwd=tmp_path,
         model=model,
@@ -4339,7 +4337,7 @@ async def test_huggingface_automatic_pin_fails_over_and_repins(
         CodingSessionConfig(
             provider=FakeProvider([]),
             model=model,
-            system="You are Tau.",
+            system="You are Pi.",
             storage=JsonlSessionStorage(record.path),
             cwd=tmp_path,
             session_id=record.id,
@@ -4349,7 +4347,7 @@ async def test_huggingface_automatic_pin_fails_over_and_repins(
             inference_provider_mode="automatic",
             provider_settings=ProviderSettings(providers=(provider_config,)),
             runtime_provider_config=provider_config,
-            resource_paths=TauResourcePaths(root=tau_paths.home, paths=tau_paths),
+            resource_paths=PiResourcePaths(root=pi_paths.home, paths=pi_paths),
         )
     )
 
@@ -4379,7 +4377,7 @@ async def test_huggingface_automatic_pin_fails_over_and_repins(
     )
     automatic_provider = created[1][1]
     assert [message.text for message in automatic_provider.calls[0][2]] == ["Continue the task"]
-    diagnostic = json.loads(tau_paths.agent_calls_log_path.read_text().splitlines()[-1])
+    diagnostic = json.loads(pi_paths.agent_calls_log_path.read_text().splitlines()[-1])
     assert diagnostic["kind"] == "route_failover"
     assert diagnostic["route_failover"] == {
         "from": "deepinfra",
@@ -4436,7 +4434,7 @@ async def test_huggingface_automatic_failover_stops_after_one_failed_fallback(
         CodingSessionConfig(
             provider=FakeProvider([]),
             model=model,
-            system="You are Tau.",
+            system="You are Pi.",
             storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
             cwd=tmp_path,
             provider_name="huggingface",
@@ -4444,9 +4442,9 @@ async def test_huggingface_automatic_failover_stops_after_one_failed_fallback(
             inference_provider_mode="automatic",
             provider_settings=ProviderSettings(providers=(provider_config,)),
             runtime_provider_config=provider_config,
-            resource_paths=TauResourcePaths(
-                root=tmp_path / ".tau",
-                paths=TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"),
+            resource_paths=PiResourcePaths(
+                root=tmp_path / ".pi-agent",
+                paths=PiPaths(home=tmp_path / ".pi-agent", agents_home=tmp_path / ".agents"),
             ),
         )
     )
@@ -4502,7 +4500,7 @@ async def test_huggingface_continue_uses_automatic_route_failover(
         CodingSessionConfig(
             provider=FakeProvider([]),
             model=model,
-            system="You are Tau.",
+            system="You are Pi.",
             storage=storage,
             cwd=tmp_path,
             provider_name="huggingface",
@@ -4510,9 +4508,9 @@ async def test_huggingface_continue_uses_automatic_route_failover(
             inference_provider_mode="automatic",
             provider_settings=ProviderSettings(providers=(provider_config,)),
             runtime_provider_config=provider_config,
-            resource_paths=TauResourcePaths(
-                root=tmp_path / ".tau",
-                paths=TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"),
+            resource_paths=PiResourcePaths(
+                root=tmp_path / ".pi-agent",
+                paths=PiPaths(home=tmp_path / ".pi-agent", agents_home=tmp_path / ".agents"),
             ),
         )
     )
@@ -4578,7 +4576,7 @@ async def test_huggingface_fixed_pin_does_not_fail_over(
         CodingSessionConfig(
             provider=FakeProvider([]),
             model=model,
-            system="You are Tau.",
+            system="You are Pi.",
             storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
             cwd=tmp_path,
             provider_name="huggingface",
@@ -4586,9 +4584,9 @@ async def test_huggingface_fixed_pin_does_not_fail_over(
             inference_provider_mode="fixed",
             provider_settings=ProviderSettings(providers=(provider_config,)),
             runtime_provider_config=provider_config,
-            resource_paths=TauResourcePaths(
-                root=tmp_path / ".tau",
-                paths=TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"),
+            resource_paths=PiResourcePaths(
+                root=tmp_path / ".pi-agent",
+                paths=PiPaths(home=tmp_path / ".pi-agent", agents_home=tmp_path / ".agents"),
             ),
         )
     )
@@ -4635,7 +4633,7 @@ async def test_huggingface_session_re_resolves_pin_on_model_switch(
             "deepseek-ai/DeepSeek-V4-Flash": "fireworks-ai",
         },
     )
-    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    manager = SessionManager(PiPaths(home=tmp_path / ".pi-agent", agents_home=tmp_path / ".agents"))
     record = manager.create_session(
         cwd=tmp_path,
         model="zai-org/GLM-5.2",
@@ -4646,7 +4644,7 @@ async def test_huggingface_session_re_resolves_pin_on_model_switch(
         CodingSessionConfig(
             provider=FakeProvider([]),
             model="zai-org/GLM-5.2",
-            system="You are Tau.",
+            system="You are Pi.",
             storage=JsonlSessionStorage(record.path),
             cwd=tmp_path,
             session_id=record.id,
@@ -4655,9 +4653,9 @@ async def test_huggingface_session_re_resolves_pin_on_model_switch(
             inference_provider="deepinfra",
             provider_settings=ProviderSettings(providers=(provider_config,)),
             runtime_provider_config=provider_config,
-            resource_paths=TauResourcePaths(
-                root=tmp_path / ".tau",
-                paths=TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"),
+            resource_paths=PiResourcePaths(
+                root=tmp_path / ".pi-agent",
+                paths=PiPaths(home=tmp_path / ".pi-agent", agents_home=tmp_path / ".agents"),
             ),
         )
     )
@@ -4708,16 +4706,16 @@ async def test_startup_model_override_rebuilds_model_dependent_runtime_provider(
         CodingSessionConfig(
             provider=FakeProvider([]),
             model=override_model,
-            system="You are Tau.",
+            system="You are Pi.",
             storage=storage,
             cwd=tmp_path,
             provider_name="huggingface",
             inference_provider="fireworks-ai",
             provider_settings=ProviderSettings(providers=(provider_config,)),
             runtime_provider_config=provider_config,
-            resource_paths=TauResourcePaths(
-                root=tmp_path / ".tau",
-                paths=TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"),
+            resource_paths=PiResourcePaths(
+                root=tmp_path / ".pi-agent",
+                paths=PiPaths(home=tmp_path / ".pi-agent", agents_home=tmp_path / ".agents"),
             ),
         )
     )
@@ -4772,7 +4770,7 @@ async def test_session_switches_configured_provider(
         CodingSessionConfig(
             provider=FakeProvider([]),
             model="fake",
-            system="You are Tau.",
+            system="You are Pi.",
             storage=storage,
             cwd=tmp_path,
             provider_name="openai",
@@ -4812,8 +4810,8 @@ async def test_session_adoption_transfers_all_runtime_provider_ownership(
     from dataclasses import replace as dataclass_replace
 
     monkeypatch.setenv("LOCAL_API_KEY", "test-key")
-    tau_paths = TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents")
-    manager = SessionManager(tau_paths)
+    pi_paths = PiPaths(home=tmp_path / ".pi-agent", agents_home=tmp_path / ".agents")
+    manager = SessionManager(pi_paths)
     cwd = tmp_path / "project"
     cwd.mkdir()
     record = manager.create_session(cwd=cwd, model="qwen", provider_name="local")
@@ -4848,7 +4846,7 @@ async def test_session_adoption_transfers_all_runtime_provider_ownership(
         CodingSessionConfig(
             provider=FakeProvider([]),
             model="qwen",
-            system="You are Tau.",
+            system="You are Pi.",
             storage=JsonlSessionStorage(record.path),
             cwd=cwd,
             session_id=record.id,
@@ -4856,7 +4854,7 @@ async def test_session_adoption_transfers_all_runtime_provider_ownership(
             provider_name="local",
             provider_settings=settings,
             runtime_provider_config=provider_config,
-            resource_paths=TauResourcePaths(root=tau_paths.home, paths=tau_paths),
+            resource_paths=PiResourcePaths(root=pi_paths.home, paths=pi_paths),
         )
     )
 
@@ -4898,11 +4896,11 @@ async def test_aborted_replacement_closes_only_candidate_provider_once(
 ) -> None:
     from dataclasses import replace as dataclass_replace
 
-    from tau_coding.extensions.runtime import ExtensionRuntime
+    from pi_coding.extensions.runtime import ExtensionRuntime
 
     monkeypatch.setenv("LOCAL_API_KEY", "test-key")
-    tau_paths = TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents")
-    manager = SessionManager(tau_paths)
+    pi_paths = PiPaths(home=tmp_path / ".pi-agent", agents_home=tmp_path / ".agents")
+    manager = SessionManager(pi_paths)
     cwd = tmp_path / "project"
     cwd.mkdir()
     record = manager.create_session(cwd=cwd, model="qwen", provider_name="local")
@@ -4948,7 +4946,7 @@ async def test_aborted_replacement_closes_only_candidate_provider_once(
         CodingSessionConfig(
             provider=FakeProvider([]),
             model="qwen",
-            system="You are Tau.",
+            system="You are Pi.",
             storage=JsonlSessionStorage(record.path),
             cwd=cwd,
             session_id=record.id,
@@ -4956,7 +4954,7 @@ async def test_aborted_replacement_closes_only_candidate_provider_once(
             provider_name="local",
             provider_settings=settings,
             runtime_provider_config=provider_config,
-            resource_paths=TauResourcePaths(root=tau_paths.home, paths=tau_paths),
+            resource_paths=PiResourcePaths(root=pi_paths.home, paths=pi_paths),
         )
     )
     active_provider = created[0]
@@ -5057,7 +5055,7 @@ async def test_failed_cross_provider_switch_preserves_active_runtime(
         CodingSessionConfig(
             provider=initial_provider,
             model="gpt-5",
-            system="You are Tau.",
+            system="You are Pi.",
             storage=JsonlSessionStorage(tmp_path / "failed-switch.jsonl"),
             cwd=tmp_path,
             provider_name="openai",
@@ -5098,8 +5096,8 @@ async def test_session_switch_uses_session_credential_store(
     tmp_path: Path,
 ) -> None:
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    tau_paths = TauPaths(home=tmp_path / "tau-home", agents_home=tmp_path / "agents-home")
-    FileCredentialStore(tau_paths.home / "credentials.json").set("openai", "stored-key")
+    pi_paths = PiPaths(home=tmp_path / "pi-home", agents_home=tmp_path / "agents-home")
+    FileCredentialStore(pi_paths.home / "credentials.json").set("openai", "stored-key")
     credential_store_paths: list[Path] = []
 
     def create_provider(
@@ -5132,18 +5130,18 @@ async def test_session_switch_uses_session_credential_store(
         CodingSessionConfig(
             provider=FakeProvider([]),
             model="fake",
-            system="You are Tau.",
+            system="You are Pi.",
             storage=JsonlSessionStorage(tmp_path / "switch-store-session.jsonl"),
             cwd=tmp_path,
             provider_name="local",
             provider_settings=settings,
-            resource_paths=TauResourcePaths(root=tau_paths.home, paths=tau_paths),
+            resource_paths=PiResourcePaths(root=pi_paths.home, paths=pi_paths),
         )
     )
 
     session.set_provider("openai")
 
-    assert credential_store_paths == [tau_paths.home / "credentials.json"]
+    assert credential_store_paths == [pi_paths.home / "credentials.json"]
 
 
 @pytest.mark.anyio
@@ -5153,7 +5151,7 @@ async def test_available_model_choices_hide_unusable_providers(
 ) -> None:
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.setenv("LOCAL_API_KEY", "local-key")
-    tau_paths = TauPaths(home=tmp_path / "tau-home", agents_home=tmp_path / "agents-home")
+    pi_paths = PiPaths(home=tmp_path / "pi-home", agents_home=tmp_path / "agents-home")
     settings = ProviderSettings(
         default_provider="openai",
         providers=(
@@ -5171,12 +5169,12 @@ async def test_available_model_choices_hide_unusable_providers(
         CodingSessionConfig(
             provider=FakeProvider([]),
             model="fake",
-            system="You are Tau.",
+            system="You are Pi.",
             storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
             cwd=tmp_path,
             provider_name="openai",
             provider_settings=settings,
-            resource_paths=TauResourcePaths(root=tau_paths.home, paths=tau_paths),
+            resource_paths=PiResourcePaths(root=pi_paths.home, paths=pi_paths),
         )
     )
 
@@ -5194,8 +5192,8 @@ async def test_available_model_choices_include_stored_credentials(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    tau_paths = TauPaths(home=tmp_path / "tau-home", agents_home=tmp_path / "agents-home")
-    FileCredentialStore(tau_paths.home / "credentials.json").set("openai", "stored-key")
+    pi_paths = PiPaths(home=tmp_path / "pi-home", agents_home=tmp_path / "agents-home")
+    FileCredentialStore(pi_paths.home / "credentials.json").set("openai", "stored-key")
     settings = ProviderSettings(
         default_provider="openai",
         providers=(OpenAICompatibleProviderConfig(name="openai", credential_name="openai"),),
@@ -5205,12 +5203,12 @@ async def test_available_model_choices_include_stored_credentials(
         CodingSessionConfig(
             provider=FakeProvider([]),
             model="fake",
-            system="You are Tau.",
+            system="You are Pi.",
             storage=JsonlSessionStorage(tmp_path / "stored-session.jsonl"),
             cwd=tmp_path,
             provider_name="openai",
             provider_settings=settings,
-            resource_paths=TauResourcePaths(root=tau_paths.home, paths=tau_paths),
+            resource_paths=PiResourcePaths(root=pi_paths.home, paths=pi_paths),
         )
     )
 
@@ -5226,7 +5224,7 @@ async def test_session_toggles_and_cycles_scoped_models(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("LOCAL_API_KEY", "local-key")
-    tau_paths = TauPaths(home=tmp_path / "tau-home", agents_home=tmp_path / "agents-home")
+    pi_paths = PiPaths(home=tmp_path / "pi-home", agents_home=tmp_path / "agents-home")
     settings = ProviderSettings(
         default_provider="local",
         providers=(
@@ -5244,19 +5242,19 @@ async def test_session_toggles_and_cycles_scoped_models(
         CodingSessionConfig(
             provider=FakeProvider([]),
             model="qwen",
-            system="You are Tau.",
+            system="You are Pi.",
             storage=JsonlSessionStorage(tmp_path / "scoped-session.jsonl"),
             cwd=tmp_path,
             provider_name="local",
             provider_settings=settings,
-            resource_paths=TauResourcePaths(root=tau_paths.home, paths=tau_paths),
+            resource_paths=PiResourcePaths(root=pi_paths.home, paths=pi_paths),
         )
     )
 
     llama = ModelChoice(provider_name="local", model="llama")
     scoped = session.toggle_scoped_model(llama)
     choice = session.cycle_scoped_model()
-    saved = json.loads((tau_paths.home / "providers.json").read_text(encoding="utf-8"))
+    saved = json.loads((pi_paths.home / "providers.json").read_text(encoding="utf-8"))
 
     assert [(item.provider_name, item.model) for item in scoped] == [
         ("local", "qwen"),
@@ -5273,7 +5271,7 @@ async def test_session_toggles_and_cycles_scoped_models(
 @requires_posix_shell
 @pytest.mark.anyio
 async def test_session_resume_preserves_shell_command_prefix(tmp_path: Path) -> None:
-    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    manager = SessionManager(PiPaths(home=tmp_path / ".pi-agent", agents_home=tmp_path / ".agents"))
     first_cwd = tmp_path / "first"
     second_cwd = tmp_path / "second"
     first_cwd.mkdir()
@@ -5285,7 +5283,7 @@ async def test_session_resume_preserves_shell_command_prefix(tmp_path: Path) -> 
         CodingSessionConfig(
             provider=FakeProvider([]),
             model="fake",
-            system="You are Tau.",
+            system="You are Pi.",
             storage=JsonlSessionStorage(first_record.path),
             cwd=first_record.cwd,
             session_id=first_record.id,
@@ -5304,7 +5302,7 @@ async def test_session_resume_preserves_shell_command_prefix(tmp_path: Path) -> 
 
 @pytest.mark.anyio
 async def test_session_resumes_indexed_session(tmp_path: Path) -> None:
-    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    manager = SessionManager(PiPaths(home=tmp_path / ".pi-agent", agents_home=tmp_path / ".agents"))
     first_cwd = tmp_path / "first"
     first_cwd.mkdir()
     first_record = manager.create_session(cwd=first_cwd, model="fake", title="First")
@@ -5325,7 +5323,7 @@ async def test_session_resumes_indexed_session(tmp_path: Path) -> None:
         CodingSessionConfig(
             provider=provider,
             model="fake",
-            system="You are Tau.",
+            system="You are Pi.",
             storage=first_storage,
             cwd=first_record.cwd,
             session_id=first_record.id,
@@ -5366,7 +5364,7 @@ async def test_session_toggle_scoped_model_preserves_newer_provider_file_changes
 ) -> None:
     monkeypatch.setenv("LOCAL_API_KEY", "local-key")
     monkeypatch.setenv("REMOTE_API_KEY", "remote-key")
-    tau_paths = TauPaths(home=tmp_path / "tau-home", agents_home=tmp_path / "agents-home")
+    pi_paths = PiPaths(home=tmp_path / "pi-home", agents_home=tmp_path / "agents-home")
     loaded_settings = ProviderSettings(
         default_provider="local",
         providers=(
@@ -5395,23 +5393,23 @@ async def test_session_toggle_scoped_model_preserves_newer_provider_file_changes
             ScopedModelConfig(provider="remote", model="sonnet"),
         ),
     )
-    save_provider_settings(newer_settings, tau_paths)
+    save_provider_settings(newer_settings, pi_paths)
     session = await CodingSession.load(
         CodingSessionConfig(
             provider=FakeProvider([]),
             model="qwen",
-            system="You are Tau.",
+            system="You are Pi.",
             storage=JsonlSessionStorage(tmp_path / "scoped-session.jsonl"),
             cwd=tmp_path,
             provider_name="local",
             provider_settings=loaded_settings,
-            resource_paths=TauResourcePaths(root=tau_paths.home, paths=tau_paths),
+            resource_paths=PiResourcePaths(root=pi_paths.home, paths=pi_paths),
         )
     )
 
     session.toggle_scoped_model(ModelChoice(provider_name="local", model="llama"))
 
-    saved = coding_session_module.load_provider_settings(tau_paths)
+    saved = coding_session_module.load_provider_settings(pi_paths)
     assert saved.get_provider("remote").default_model == "sonnet"
     assert saved.scoped_models == (
         ScopedModelConfig(provider="local", model="qwen"),
@@ -5431,7 +5429,7 @@ async def test_session_set_model_rejects_model_not_declared_for_provider(tmp_pat
         CodingSessionConfig(
             provider=FakeProvider([]),
             model="gpt-5",
-            system="You are Tau.",
+            system="You are Pi.",
             storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
             cwd=tmp_path,
             provider_name="openai",
@@ -5479,7 +5477,7 @@ async def test_session_load_falls_back_when_persisted_model_does_not_match_provi
         CodingSessionConfig(
             provider=FakeProvider([]),
             model="gpt-5.5",
-            system="You are Tau.",
+            system="You are Pi.",
             storage=storage,
             cwd=tmp_path,
             provider_name="openai-codex",
@@ -5501,7 +5499,7 @@ async def test_session_set_model_persists_default_provider_model(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     isolate_home(monkeypatch, tmp_path)
-    tau_paths = TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents")
+    pi_paths = PiPaths(home=tmp_path / ".pi-agent", agents_home=tmp_path / ".agents")
     provider_config = OpenAICompatibleProviderConfig(
         name="openai",
         models=("gpt-5", "gpt-5-mini"),
@@ -5511,18 +5509,18 @@ async def test_session_set_model_persists_default_provider_model(
         CodingSessionConfig(
             provider=FakeProvider([]),
             model="gpt-5",
-            system="You are Tau.",
+            system="You are Pi.",
             storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
             cwd=tmp_path,
             provider_name="openai",
             provider_settings=ProviderSettings(providers=(provider_config,)),
-            resource_paths=TauResourcePaths(root=tau_paths.home, paths=tau_paths),
+            resource_paths=PiResourcePaths(root=pi_paths.home, paths=pi_paths),
         )
     )
 
     session.set_model("gpt-5-mini")
 
-    saved = coding_session_module.load_provider_settings(tau_paths)
+    saved = coding_session_module.load_provider_settings(pi_paths)
     assert saved.default_provider == "openai"
     assert saved.get_provider("openai").default_model == "gpt-5-mini"
 
@@ -5532,7 +5530,7 @@ async def test_session_set_model_choice_persists_default_provider_model(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     isolate_home(monkeypatch, tmp_path)
-    tau_paths = TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents")
+    pi_paths = PiPaths(home=tmp_path / ".pi-agent", agents_home=tmp_path / ".agents")
     settings = ProviderSettings(
         default_provider="openai",
         providers=(
@@ -5568,20 +5566,20 @@ async def test_session_set_model_choice_persists_default_provider_model(
         CodingSessionConfig(
             provider=FakeProvider([]),
             model="gpt-5",
-            system="You are Tau.",
+            system="You are Pi.",
             storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
             cwd=tmp_path,
             provider_name="openai",
             provider_settings=settings,
             runtime_provider_config=settings.get_provider("openai"),
-            resource_paths=TauResourcePaths(root=tau_paths.home, paths=tau_paths),
+            resource_paths=PiResourcePaths(root=pi_paths.home, paths=pi_paths),
         )
     )
     created.clear()
 
     session.set_model_choice(ModelChoice(provider_name="local", model="llama"))
 
-    saved = coding_session_module.load_provider_settings(tau_paths)
+    saved = coding_session_module.load_provider_settings(pi_paths)
     assert saved.default_provider == "local"
     assert saved.get_provider("local").default_model == "llama"
     assert created == [("local", "llama")]
@@ -5593,7 +5591,7 @@ async def test_session_set_model_choice_switches_provider_model_directly(
 ) -> None:
     isolate_home(monkeypatch, tmp_path)
     monkeypatch.setenv("LOCAL_API_KEY", "local-key")
-    tau_paths = TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents")
+    pi_paths = PiPaths(home=tmp_path / ".pi-agent", agents_home=tmp_path / ".agents")
     settings = ProviderSettings(
         default_provider="openai",
         providers=(
@@ -5633,13 +5631,13 @@ async def test_session_set_model_choice_switches_provider_model_directly(
         CodingSessionConfig(
             provider=FakeProvider([]),
             model="gpt-5",
-            system="You are Tau.",
+            system="You are Pi.",
             storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
             cwd=tmp_path,
             provider_name="openai",
             provider_settings=settings,
             runtime_provider_config=settings.get_provider("openai"),
-            resource_paths=TauResourcePaths(root=tau_paths.home, paths=tau_paths),
+            resource_paths=PiResourcePaths(root=pi_paths.home, paths=pi_paths),
         )
     )
     created.clear()
@@ -5657,7 +5655,7 @@ async def test_session_set_model_preserves_newer_provider_file_changes(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     isolate_home(monkeypatch, tmp_path)
-    tau_paths = TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents")
+    pi_paths = PiPaths(home=tmp_path / ".pi-agent", agents_home=tmp_path / ".agents")
     loaded_provider = OpenAICompatibleProviderConfig(
         name="openai",
         models=("gpt-5", "gpt-5-mini"),
@@ -5673,30 +5671,30 @@ async def test_session_set_model_preserves_newer_provider_file_changes(
                 credential_name="openrouter",
                 models=("openai/gpt-5.5",),
                 default_model="openai/gpt-5.5",
-                headers={"X-Title": "Tau"},
+                headers={"X-Title": "Pi"},
             ),
         ),
         scoped_models=(ScopedModelConfig(provider="openrouter", model="openai/gpt-5.5"),),
     )
-    save_provider_settings(newer_settings, tau_paths)
+    save_provider_settings(newer_settings, pi_paths)
     session = await CodingSession.load(
         CodingSessionConfig(
             provider=FakeProvider([]),
             model="gpt-5",
-            system="You are Tau.",
+            system="You are Pi.",
             storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
             cwd=tmp_path,
             provider_name="openai",
             provider_settings=ProviderSettings(providers=(loaded_provider,)),
-            resource_paths=TauResourcePaths(root=tau_paths.home, paths=tau_paths),
+            resource_paths=PiResourcePaths(root=pi_paths.home, paths=pi_paths),
         )
     )
 
     session.set_model("gpt-5-mini")
 
-    saved = coding_session_module.load_provider_settings(tau_paths)
+    saved = coding_session_module.load_provider_settings(pi_paths)
     assert saved.get_provider("openai").default_model == "gpt-5-mini"
-    assert saved.get_provider("openrouter").headers == {"X-Title": "Tau"}
+    assert saved.get_provider("openrouter").headers == {"X-Title": "Pi"}
     assert saved.scoped_models == (
         ScopedModelConfig(provider="openrouter", model="openai/gpt-5.5"),
     )
@@ -5706,7 +5704,7 @@ async def test_session_set_model_preserves_newer_provider_file_changes(
 async def test_session_new_session_uses_default_provider_model(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    manager = SessionManager(PiPaths(home=tmp_path / ".pi-agent", agents_home=tmp_path / ".agents"))
     current_record = manager.create_session(
         cwd=tmp_path,
         model="openai/gpt-5.5",
@@ -5747,7 +5745,7 @@ async def test_session_new_session_uses_default_provider_model(
         CodingSessionConfig(
             provider=FakeProvider([]),
             model="openai/gpt-5.5",
-            system="You are Tau.",
+            system="You are Pi.",
             storage=JsonlSessionStorage(current_record.path),
             cwd=current_record.cwd,
             session_id=current_record.id,
@@ -5772,7 +5770,7 @@ async def test_session_new_session_uses_default_provider_model(
 async def test_session_new_session_is_indexed_after_first_message(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    manager = SessionManager(PiPaths(home=tmp_path / ".pi-agent", agents_home=tmp_path / ".agents"))
     current_record = manager.create_session(cwd=tmp_path, model="fake", provider_name="fake")
     settings = ProviderSettings(
         default_provider="openai",
@@ -5811,7 +5809,7 @@ async def test_session_new_session_is_indexed_after_first_message(
         CodingSessionConfig(
             provider=FakeProvider([]),
             model="fake",
-            system="You are Tau.",
+            system="You are Pi.",
             storage=JsonlSessionStorage(current_record.path),
             cwd=current_record.cwd,
             session_id=current_record.id,
@@ -5842,7 +5840,7 @@ async def test_session_new_session_is_indexed_after_first_message(
 async def test_session_name_indexes_pending_session_without_prompt(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    manager = SessionManager(PiPaths(home=tmp_path / ".pi-agent", agents_home=tmp_path / ".agents"))
     current_record = manager.create_session(cwd=tmp_path, model="fake", provider_name="fake")
     settings = ProviderSettings(
         default_provider="openai",
@@ -5870,7 +5868,7 @@ async def test_session_name_indexes_pending_session_without_prompt(
         CodingSessionConfig(
             provider=FakeProvider([]),
             model="fake",
-            system="You are Tau.",
+            system="You are Pi.",
             storage=JsonlSessionStorage(current_record.path),
             cwd=current_record.cwd,
             session_id=current_record.id,
@@ -5905,7 +5903,7 @@ async def test_session_name_indexes_pending_session_without_prompt(
 async def test_session_resume_uses_target_session_provider_model(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    manager = SessionManager(PiPaths(home=tmp_path / ".pi-agent", agents_home=tmp_path / ".agents"))
     first_cwd = tmp_path / "first"
     first_cwd.mkdir()
     first_record = manager.create_session(
@@ -5960,7 +5958,7 @@ async def test_session_resume_uses_target_session_provider_model(
         CodingSessionConfig(
             provider=FakeProvider([]),
             model="gpt-5",
-            system="You are Tau.",
+            system="You are Pi.",
             storage=JsonlSessionStorage(first_record.path),
             cwd=first_record.cwd,
             session_id=first_record.id,
@@ -5983,7 +5981,7 @@ async def test_session_resume_uses_target_session_provider_model(
 async def test_session_resume_missing_provider_preserves_active_provider_model(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    manager = SessionManager(PiPaths(home=tmp_path / ".pi-agent", agents_home=tmp_path / ".agents"))
     first_cwd = tmp_path / "first"
     first_cwd.mkdir()
     first_record = manager.create_session(
@@ -6038,7 +6036,7 @@ async def test_session_resume_missing_provider_preserves_active_provider_model(
         CodingSessionConfig(
             provider=FakeProvider([]),
             model="gpt-5",
-            system="You are Tau.",
+            system="You are Pi.",
             storage=JsonlSessionStorage(first_record.path),
             cwd=first_record.cwd,
             session_id=first_record.id,
@@ -6061,7 +6059,7 @@ async def test_session_resume_missing_provider_preserves_active_provider_model(
 async def test_session_resume_rejects_incompatible_provider_model(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    manager = SessionManager(PiPaths(home=tmp_path / ".pi-agent", agents_home=tmp_path / ".agents"))
     first_cwd = tmp_path / "first"
     first_cwd.mkdir()
     first_record = manager.create_session(
@@ -6111,7 +6109,7 @@ async def test_session_resume_rejects_incompatible_provider_model(
         CodingSessionConfig(
             provider=FakeProvider([]),
             model="gpt-5",
-            system="You are Tau.",
+            system="You are Pi.",
             storage=JsonlSessionStorage(first_record.path),
             cwd=first_record.cwd,
             session_id=first_record.id,
@@ -6134,7 +6132,7 @@ async def test_session_resume_rejects_incompatible_provider_model(
 
 @pytest.mark.anyio
 async def test_session_context_usage_recalculates_after_resume(tmp_path: Path) -> None:
-    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    manager = SessionManager(PiPaths(home=tmp_path / ".pi-agent", agents_home=tmp_path / ".agents"))
     first_cwd = tmp_path / "first"
     first_cwd.mkdir()
     first_record = manager.create_session(cwd=first_cwd, model="fake", title="First")
@@ -6147,7 +6145,7 @@ async def test_session_context_usage_recalculates_after_resume(tmp_path: Path) -
         CodingSessionConfig(
             provider=FakeProvider([]),
             model="fake",
-            system="You are Tau.",
+            system="You are Pi.",
             storage=first_storage,
             cwd=first_record.cwd,
             session_id=first_record.id,
@@ -6227,7 +6225,7 @@ async def test_new_session_initial_thinking_respects_override(
         CodingSessionConfig(
             provider=FakeProvider([]),
             model="reasoner",
-            system="You are Tau.",
+            system="You are Pi.",
             storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
             cwd=tmp_path,
             provider_name="openai",
@@ -6256,7 +6254,7 @@ async def test_resumed_session_thinking_override_is_ephemeral(
         return CodingSessionConfig(
             provider=FakeProvider([]),
             model="reasoner",
-            system="You are Tau.",
+            system="You are Pi.",
             storage=JsonlSessionStorage(storage_path),
             cwd=tmp_path,
             provider_name="openai",
@@ -6292,7 +6290,7 @@ async def test_thinking_override_unsupported_level_raises_on_load(
             CodingSessionConfig(
                 provider=FakeProvider([]),
                 model="reasoner",
-                system="You are Tau.",
+                system="You are Pi.",
                 storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
                 cwd=tmp_path,
                 provider_name="openai",
@@ -6310,11 +6308,11 @@ def _dynamic_thinking_override_config(
     extension = tmp_path / "dynamic_provider.py"
     extension.write_text(
         """
-from tau_coding.extensions import DynamicProvider, OpenAICompatibleTransport, ProviderModel
+from pi_coding.extensions import DynamicProvider, OpenAICompatibleTransport, ProviderModel
 
 
-def setup(tau):
-    tau.register_provider(DynamicProvider(
+def setup(pi):
+    pi.register_provider(DynamicProvider(
         id="local",
         display_name="Local",
         models=(ProviderModel("reasoner", thinking_levels=("off", "high")),),
@@ -6327,7 +6325,7 @@ def setup(tau):
     return CodingSessionConfig(
         provider=None,
         model="reasoner",
-        system="You are Tau.",
+        system="You are Pi.",
         storage=JsonlSessionStorage(tmp_path / "dynamic-session.jsonl"),
         cwd=tmp_path,
         provider_name="local",

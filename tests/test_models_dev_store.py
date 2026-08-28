@@ -6,15 +6,15 @@ from pathlib import Path
 import httpx
 import pytest
 
-import tau_coding.models_dev_store as store
-from tau_coding.catalog_loader import effective_catalog
-from tau_coding.models_dev import MODELS_DEV_URL, NVIDIA_MODELS_URL
-from tau_coding.models_dev_store import (
+import pi_coding.models_dev_store as store
+from pi_coding.catalog_loader import effective_catalog
+from pi_coding.models_dev import MODELS_DEV_URL, NVIDIA_MODELS_URL
+from pi_coding.models_dev_store import (
     ModelsDevRefreshError,
     cached_models_dev_catalog_document,
     refresh_models_dev_catalog,
 )
-from tau_coding.paths import TauPaths
+from pi_coding.paths import PiPaths
 
 FIXTURE = Path(__file__).parent / "fixtures/models_dev_catalog.json"
 
@@ -40,7 +40,7 @@ def _client(source: dict[str, object]) -> httpx.AsyncClient:
 async def test_refresh_persists_catalog_and_effective_catalog_uses_newer_cache(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    paths = TauPaths(home=tmp_path / ".tau")
+    paths = PiPaths(home=tmp_path / ".pi-agent")
     async with _client(_source()) as client:
         result = await refresh_models_dev_catalog(
             paths=paths,
@@ -68,7 +68,7 @@ async def test_refresh_persists_catalog_and_effective_catalog_uses_newer_cache(
 
 @pytest.mark.anyio
 async def test_refresh_revalidates_with_etag_and_preserves_cached_body(tmp_path: Path) -> None:
-    paths = TauPaths(home=tmp_path / ".tau")
+    paths = PiPaths(home=tmp_path / ".pi-agent")
     async with _client(_source()) as client:
         await refresh_models_dev_catalog(paths=paths, force=True, client=client, now=1000.0)
     result_path = paths.home / "models-store.json"
@@ -96,14 +96,14 @@ async def test_refresh_revalidates_with_etag_and_preserves_cached_body(tmp_path:
 async def test_offline_mode_uses_bundled_catalog_without_network(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("TAU_OFFLINE", "1")
+    monkeypatch.setenv("PI_AGENT_OFFLINE", "1")
 
     def no_network(_request: httpx.Request) -> httpx.Response:
         raise AssertionError("offline mode should avoid network")
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(no_network)) as client:
         result = await refresh_models_dev_catalog(
-            paths=TauPaths(home=tmp_path / ".tau"),
+            paths=PiPaths(home=tmp_path / ".pi-agent"),
             force=True,
             client=client,
         )
@@ -114,7 +114,7 @@ async def test_offline_mode_uses_bundled_catalog_without_network(
 
 @pytest.mark.anyio
 async def test_fresh_cache_skips_network_and_failed_force_preserves_it(tmp_path: Path) -> None:
-    paths = TauPaths(home=tmp_path / ".tau")
+    paths = PiPaths(home=tmp_path / ".pi-agent")
     async with _client(_source()) as client:
         first = await refresh_models_dev_catalog(paths=paths, force=True, client=client, now=1000.0)
     cached_text = first.cache_path.read_text(encoding="utf-8")

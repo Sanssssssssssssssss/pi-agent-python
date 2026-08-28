@@ -5,8 +5,8 @@ from pathlib import Path
 import pytest
 from textual import events
 
-from tau_coding.tui.app import PromptInput, TauTuiApp
-from tau_coding.tui.file_drop import normalize_dropped_paths
+from pi_coding.tui.app import PiTuiApp, PromptInput
+from pi_coding.tui.file_drop import normalize_dropped_paths
 
 
 def _escaped(path: Path) -> str:
@@ -179,7 +179,7 @@ class TestUnfocusedDropRouting:
 
         file = tmp_path / "notes.txt"
         file.touch()
-        app = TauTuiApp(FakeSession())
+        app = PiTuiApp(FakeSession())
 
         async with app.run_test() as pilot:
             app.post_message(events.AppBlur())
@@ -198,7 +198,7 @@ class TestUnfocusedDropRouting:
 
         file = tmp_path / "notes.txt"
         file.touch()
-        app = TauTuiApp(FakeSession())
+        app = PiTuiApp(FakeSession())
 
         async with app.run_test() as pilot:
             prompt = app.query_one("#prompt", PromptInput)

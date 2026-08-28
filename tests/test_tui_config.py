@@ -2,8 +2,8 @@ from pathlib import Path
 
 import pytest
 
-from tau_coding.paths import TauPaths
-from tau_coding.tui.config import (
+from pi_coding.paths import PiPaths
+from pi_coding.tui.config import (
     HIGH_CONTRAST_THEME,
     TuiConfigError,
     TuiKeybindings,
@@ -16,14 +16,14 @@ from tau_coding.tui.config import (
 )
 
 
-def test_tui_settings_path_uses_tau_home(tmp_path: Path) -> None:
-    paths = TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents")
+def test_tui_settings_path_uses_pi_home(tmp_path: Path) -> None:
+    paths = PiPaths(home=tmp_path / ".pi-agent", agents_home=tmp_path / ".agents")
 
-    assert tui_settings_path(paths) == tmp_path / ".tau" / "tui.json"
+    assert tui_settings_path(paths) == tmp_path / ".pi-agent" / "tui.json"
 
 
 def test_load_tui_settings_returns_defaults_when_file_is_missing(tmp_path: Path) -> None:
-    paths = TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents")
+    paths = PiPaths(home=tmp_path / ".pi-agent", agents_home=tmp_path / ".agents")
 
     assert load_tui_settings(paths) == TuiSettings()
     assert load_tui_settings(paths).keybindings.model_cycle_reverse == "ctrl+shift+p"
@@ -31,7 +31,7 @@ def test_load_tui_settings_returns_defaults_when_file_is_missing(tmp_path: Path)
 
 
 def test_load_tui_settings_reads_keybindings(tmp_path: Path) -> None:
-    paths = TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents")
+    paths = PiPaths(home=tmp_path / ".pi-agent", agents_home=tmp_path / ".agents")
     path = tui_settings_path(paths)
     path.parent.mkdir(parents=True)
     path.write_text(
@@ -72,12 +72,12 @@ def test_load_tui_settings_reads_keybindings(tmp_path: Path) -> None:
 
 
 def test_save_tui_settings_writes_json(tmp_path: Path) -> None:
-    paths = TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents")
+    paths = PiPaths(home=tmp_path / ".pi-agent", agents_home=tmp_path / ".agents")
 
-    path = save_tui_settings(TuiSettings(theme="tau-light"), paths)
+    path = save_tui_settings(TuiSettings(theme="pi-light"), paths)
 
-    assert path == tmp_path / ".tau" / "tui.json"
-    assert load_tui_settings(paths).theme == "tau-light"
+    assert path == tmp_path / ".pi-agent" / "tui.json"
+    assert load_tui_settings(paths).theme == "pi-light"
 
 
 def test_tui_settings_ignores_removed_message_selection_keybindings() -> None:
@@ -96,12 +96,12 @@ def test_tui_settings_ignores_removed_message_selection_keybindings() -> None:
 def test_tui_settings_ignore_unknown_fields() -> None:
     settings = tui_settings_from_json(
         {
-            "theme": "tau-light",
+            "theme": "pi-light",
             "future_setting": {"enabled": True},
         }
     )
 
-    assert settings.theme == "tau-light"
+    assert settings.theme == "pi-light"
 
 
 def test_tui_keybindings_ignore_unknown_actions() -> None:
@@ -133,7 +133,7 @@ def test_tui_settings_accept_unknown_theme_and_fall_back_when_resolving() -> Non
     settings = tui_settings_from_json({"theme": "solarized"})
 
     assert settings.theme == "solarized"
-    assert settings.resolved_theme == get_tui_theme("tau-dark")
+    assert settings.resolved_theme == get_tui_theme("pi-dark")
 
 
 def test_tui_settings_reject_non_string_theme() -> None:
@@ -144,9 +144,9 @@ def test_tui_settings_reject_non_string_theme() -> None:
 
 
 def test_tui_settings_accept_light_theme() -> None:
-    settings = tui_settings_from_json({"theme": "tau-light"})
+    settings = tui_settings_from_json({"theme": "pi-light"})
 
-    assert settings.theme == "tau-light"
+    assert settings.theme == "pi-light"
     assert settings.resolved_theme.screen_background == "#ffffff"
     assert settings.resolved_theme.syntax_theme == "ansi_light"
 
@@ -195,8 +195,8 @@ def test_tui_keybindings_serialize_to_json() -> None:
 
 def test_get_tui_theme_returns_builtin_theme() -> None:
     assert get_tui_theme("high-contrast").prompt_border == "#00ff66"
-    assert get_tui_theme("tau-light").prompt_border == "#2563eb"
-    assert get_tui_theme("tau-dark").screen_background == "#000000"
+    assert get_tui_theme("pi-light").prompt_border == "#2563eb"
+    assert get_tui_theme("pi-dark").screen_background == "#000000"
 
 
 def test_tui_turn_notification_defaults_to_desktop() -> None:

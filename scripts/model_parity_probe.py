@@ -1,4 +1,4 @@
-"""Run the same bounded real-model probes through Tau and pinned Pi."""
+"""Run the same bounded real-model probes through Pi Agent and pinned Pi."""
 
 from __future__ import annotations
 
@@ -12,14 +12,14 @@ from pathlib import Path
 from time import monotonic
 from typing import Any, cast
 
-from tau_agent.loop import run_agent_loop
-from tau_agent.messages import AgentMessage, TextContent, UserMessage
-from tau_agent.provider import CancellationToken, ModelProvider
-from tau_agent.provider_events import AssistantMessageEvent
-from tau_agent.tools import AgentTool, AgentToolResult, ToolUpdateCallback
-from tau_agent.types import JSONValue
-from tau_ai.env import OpenAICompatibleConfig
-from tau_ai.openai_compatible import OpenAICompatibleProvider
+from pi_agent.loop import run_agent_loop
+from pi_agent.messages import AgentMessage, TextContent, UserMessage
+from pi_agent.provider import CancellationToken, ModelProvider
+from pi_agent.provider_events import AssistantMessageEvent
+from pi_agent.tools import AgentTool, AgentToolResult, ToolUpdateCallback
+from pi_agent.types import JSONValue
+from pi_ai.env import OpenAICompatibleConfig
+from pi_ai.openai_compatible import OpenAICompatibleProvider
 
 
 class RecordingProvider:
@@ -58,7 +58,7 @@ class RecordingProvider:
         )
 
 
-async def _tau_probe(
+async def _pi_agent_probe(
     scenario: str,
     *,
     api_key: str,
@@ -92,9 +92,7 @@ async def _tau_probe(
         del tool_call_id, signal, on_update
         a = cast(int, arguments["a"])
         b = cast(int, arguments["b"])
-        return AgentToolResult(
-            content=[TextContent(text=str(a * b))], details={"a": a, "b": b}
-        )
+        return AgentToolResult(content=[TextContent(text=str(a * b))], details={"a": a, "b": b})
 
     tools = (
         [
@@ -155,7 +153,7 @@ async def _tau_probe(
             )
         receipt: dict[str, Any] = {
             "identity": {
-                "entrant": "tau",
+                "entrant": "pi-agent",
                 "scenario": scenario,
                 "model": model,
                 "baseUrl": base_url,
@@ -169,7 +167,7 @@ async def _tau_probe(
         }
     except Exception as exc:  # noqa: BLE001 - receipt must survive a provider failure
         receipt = {
-            "identity": {"entrant": "tau", "scenario": scenario, "model": model},
+            "identity": {"entrant": "pi-agent", "scenario": scenario, "model": model},
             "durationMs": (monotonic() - started) * 1000,
             "events": events,
             "providerCalls": recording.calls,
@@ -185,7 +183,7 @@ def _arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--pi-root", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
-    parser.add_argument("--only", choices=("all", "tau", "pi"), default="all")
+    parser.add_argument("--only", choices=("all", "pi-agent", "pi"), default="all")
     parser.add_argument("--scenario", choices=("all", "plain", "tool"), default="all")
     return parser.parse_args()
 
@@ -199,13 +197,13 @@ async def main() -> int:
         raise RuntimeError("LLM_API_KEY, LLM_BASE_URL, and LLM_MODEL are required")
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
-    async def run_tau(scenario: str) -> None:
-        await _tau_probe(
+    async def run_pi_agent(scenario: str) -> None:
+        await _pi_agent_probe(
             scenario,
             api_key=api_key,
             base_url=base_url,
             model=model,
-            output=args.output_dir / f"tau-{scenario}.json",
+            output=args.output_dir / f"pi-agent-{scenario}.json",
         )
 
     def run_pi(scenario: str) -> None:
@@ -240,14 +238,19 @@ async def main() -> int:
     node = "node.exe" if os.name == "nt" else "node"
     tsx = args.pi_root / "node_modules" / "tsx" / "dist" / "cli.mjs"
     script = Path(__file__).with_name("pi_model_probe.ts")
-    schedule = (("tau", "plain"), ("pi", "plain"), ("pi", "tool"), ("tau", "tool"))
+    schedule = (
+        ("pi-agent", "plain"),
+        ("pi", "plain"),
+        ("pi-agent", "tool"),
+        ("pi", "tool"),
+    )
     for entrant, scenario in schedule:
         if args.only not in {"all", entrant}:
             continue
         if args.scenario not in {"all", scenario}:
             continue
-        if entrant == "tau":
-            await run_tau(scenario)
+        if entrant == "pi-agent":
+            await run_pi_agent(scenario)
         else:
             run_pi(scenario)
     return 0

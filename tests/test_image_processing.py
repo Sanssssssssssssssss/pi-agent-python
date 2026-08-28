@@ -3,8 +3,8 @@ from io import BytesIO
 import pytest
 from PIL import Image
 
-import tau_coding.image_processing as image_processing
-from tau_coding.image_processing import (
+import pi_coding.image_processing as image_processing
+from pi_coding.image_processing import (
     ImageProcessingFailure,
     ProcessedImage,
     detect_supported_image_mime_type,

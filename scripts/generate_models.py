@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate Tau's bundled model catalog from models.dev, following Pi."""
+"""Generate Pi Agent's bundled model catalog from models.dev, following Pi."""
 
 from __future__ import annotations
 
@@ -9,20 +9,22 @@ import time
 from pathlib import Path
 from urllib.request import Request, urlopen
 
-from tau_coding.catalog_loader import builtin_source_catalog
-from tau_coding.models_dev import (
+from pi_coding.catalog_loader import builtin_source_catalog
+from pi_coding.models_dev import (
     MODELS_DEV_URL,
     NVIDIA_MODELS_URL,
     models_dev_catalog_document,
     nvidia_model_filter,
 )
 
-DEFAULT_OUTPUT = Path("src/tau_coding/data/models-dev-catalog.json")
+DEFAULT_OUTPUT = Path("src/pi_coding/data/models-dev-catalog.json")
 
 
 def _load_source(location: str) -> object:
     if location.startswith(("http://", "https://")):
-        request = Request(location, headers={"User-Agent": "tau-model-catalog-generator"})
+        request = Request(
+            location, headers={"User-Agent": "pi-agent-python-model-catalog-generator"}
+        )
         with urlopen(request, timeout=30) as response:  # noqa: S310 - explicit build input
             return json.load(response)
     with Path(location).open(encoding="utf-8") as source_file:

@@ -1,9 +1,9 @@
-"""Add a small, host-framed status section to Tau's TUI sidebar."""
+"""Add a small, host-framed status section to Pi's TUI sidebar."""
 
-from tau_coding.extensions import ExtensionAPI, ExtensionContext
+from pi_coding.extensions import ExtensionAPI, ExtensionContext
 
 
-def setup(tau: ExtensionAPI) -> None:
+def setup(pi: ExtensionAPI) -> None:
     """Show and update a turn counter when the active frontend has a sidebar."""
     turn_count = 0
 
@@ -34,6 +34,6 @@ def setup(tau: ExtensionAPI) -> None:
         if sidebar is not None:
             sidebar.remove_section("turns")
 
-    tau.on("session_start", on_session_start)
-    tau.on("turn_end", on_turn_end)
-    tau.on("session_shutdown", on_session_shutdown)
+    pi.on("session_start", on_session_start)
+    pi.on("turn_end", on_turn_end)
+    pi.on("session_shutdown", on_session_shutdown)
