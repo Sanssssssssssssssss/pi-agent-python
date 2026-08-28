@@ -227,7 +227,20 @@ def test_windows_handoff_blocks_for_live_parent_and_preserves_arguments(
 ) -> None:
     if powershell is None:
         pytest.skip("requires Windows and PowerShell")
-    parent = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    release_parent = tmp_path / "release parent"
+    parent = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import pathlib, sys, time\n"
+                "release = pathlib.Path(sys.argv[1])\n"
+                "while not release.exists():\n"
+                "    time.sleep(0.05)\n"
+            ),
+            str(release_parent),
+        ]
+    )
     marker = tmp_path / "exact argv.json"
     fake_update = tmp_path / "fake updater.py"
     fake_update.write_text(
@@ -255,9 +268,9 @@ def test_windows_handoff_blocks_for_live_parent_and_preserves_arguments(
             handoff_directory=update_dir,
         )
         assert result.succeeded is True
-        time.sleep(0.5)
+        _wait_for_text(update_dir / "update.log", "Waiting for Pi process")
         assert not marker.exists(), "updater ran while the parent was alive"
-        parent.terminate()
+        release_parent.touch()
         parent.wait(timeout=10)
         _wait_for_file(marker)
         assert json.loads(marker.read_text(encoding="utf-8")) == list(arguments)
