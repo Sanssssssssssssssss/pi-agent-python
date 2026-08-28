@@ -2,14 +2,90 @@
 
 from __future__ import annotations
 
+import re
 from asyncio import sleep
 
+from tau_agent.messages import AssistantMessage
 from tau_agent.types import JSONValue
 from tau_ai._provider_events import ProviderRetryEvent
 from tau_ai.provider import CancellationToken
 
 RETRY_POLL_SECONDS = 0.05
 RETRY_BASE_DELAY_SECONDS = 0.25
+
+_NON_RETRYABLE_PROVIDER_LIMIT = re.compile(
+    "|".join(
+        (
+            "GoUsageLimitError",
+            "FreeUsageLimitError",
+            "Monthly usage limit reached",
+            "available balance",
+            "insufficient_quota",
+            "out of budget",
+            "quota exceeded",
+            "billing",
+        )
+    ),
+    re.IGNORECASE,
+)
+_RETRYABLE_PROVIDER_ERROR = re.compile(
+    "|".join(
+        (
+            r"overloaded",
+            r"rate.?limit",
+            r"too many requests",
+            r"429",
+            r"500",
+            r"502",
+            r"503",
+            r"504",
+            r"524",
+            r"service.?unavailable",
+            r"server.?error",
+            r"internal.?error",
+            r"provider.?returned.?error",
+            r"exceeded request buffer limit while retrying upstream",
+            r"network.?error",
+            r"connection.?error",
+            r"connection.?refused",
+            r"connection.?lost",
+            r"other side closed",
+            r"fetch failed",
+            r"getaddrinfo",
+            r"ENOTFOUND",
+            r"EAI_AGAIN",
+            r"upstream.?connect",
+            r"reset before headers",
+            r"socket hang up",
+            r"socket connection was closed",
+            r"timed? out",
+            r"timeout",
+            r"terminated",
+            r"websocket.?closed",
+            r"websocket.?error",
+            r"ended without",
+            r"stream ended before message_stop",
+            r"stream ended before a terminal response event",
+            r"http2 request did not get a response",
+            r"retry delay",
+            r"you can retry your request",
+            r"try your request again",
+            r"please retry your request",
+            r"ResourceExhausted",
+        )
+    ),
+    re.IGNORECASE,
+)
+
+
+def is_retryable_assistant_error(message: AssistantMessage) -> bool:
+    """Translate Pi's transient provider/transport error classifier."""
+    error = message.error_message
+    if message.stop_reason != "error" or not error:
+        return False
+    if _NON_RETRYABLE_PROVIDER_LIMIT.search(error):
+        return False
+    return _RETRYABLE_PROVIDER_ERROR.search(error) is not None
 
 
 def retry_delay_seconds(attempt: int, *, max_delay_seconds: float) -> float:

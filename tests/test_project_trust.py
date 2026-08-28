@@ -164,7 +164,8 @@ def test_store_round_trip_is_sorted_and_nearest_decision_wins(tmp_path: Path) ->
             {"path": str(child.resolve()), "decision": "untrusted"},
         ],
     }
-    assert store.path.stat().st_mode & 0o777 == 0o600
+    if sys.platform != "win32":
+        assert store.path.stat().st_mode & 0o777 == 0o600
 
 
 def test_parent_trust_removes_exact_child_for_inheritance(tmp_path: Path) -> None:

@@ -1,4 +1,5 @@
 import json
+import sys
 from collections.abc import AsyncIterator
 from io import StringIO
 from pathlib import Path
@@ -335,7 +336,12 @@ async def test_rpc_auto_compaction_control_updates_pi_state(tmp_path: Path) -> N
 @pytest.mark.anyio
 async def test_rpc_direct_bash_matches_pi_result_shape(tmp_path: Path) -> None:
     session = await _session(tmp_path, FakeProvider([]))
-    stdin = StringIO('{"id":"bash","type":"bash","command":"printf ok"}\n')
+    command = (
+        'powershell -NoProfile -Command "[Console]::Write(\'ok\')"'
+        if sys.platform == "win32"
+        else "printf ok"
+    )
+    stdin = StringIO(json.dumps({"id": "bash", "type": "bash", "command": command}) + "\n")
     stdout = StringIO()
 
     await RpcServer(session, stdin=stdin, stdout=stdout).run()

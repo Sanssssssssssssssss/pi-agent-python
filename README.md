@@ -1,271 +1,129 @@
-<p align="center">
-  <img src="docs/assets/tau-header.svg" alt="Tau — a Python coding-agent harness inspired by Pi" width="100%" />
-</p>
+# Pi Harness Python
 
-<p align="center">
-  <strong>A small, readable terminal coding agent — and a working example of how coding agents are built.</strong>
-</p>
+> A Tau-derived Python implementation of the observable coding-agent behavior in Pi 0.84.1.
 
-<p align="center">
-  <a href="https://twotimespi.dev/">Documentation</a>
-  ·
-  <a href="https://twotimespi.dev/quickstart/">Quickstart</a>
-  ·
-  <a href="https://twotimespi.dev/internals/architecture/">Architecture</a>
-  ·
-  <a href="https://pypi.org/project/tau-ai/">PyPI</a>
-  ·
-  <a href="https://github.com/huggingface/tau/issues/1">Roadmap</a>
-</p>
+[![Python 3.12+](https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Upstream: Tau](https://img.shields.io/badge/upstream-huggingface%2Ftau-blue)](https://github.com/huggingface/tau)
+[![Reference: Pi 0.84.1](https://img.shields.io/badge/reference-Pi%200.84.1-6f42c1)](https://github.com/badlogic/pi-mono)
 
-<p align="center">
-  <strong><a href="https://link.alejandro-ao.com/tau-discord">Join the Tau Discord community →</a></strong>
-</p>
+This repository keeps Tau's readable Python layers and translates Pi's TypeScript behavior into them. It is an independent experimental derivative, not an official Pi or Tau release.
 
----
+中文简介：这是一个以 Tau 为上游、按 Pi 0.84.1 源码行为翻译的 Python Agent Harness。目标是得到可读、可测试、可替换 provider 和工具的干净基座，而不是重新发明一套 Agent 框架。
 
-## What is Tau?
+## Architecture
 
-**Tau is a coding agent that lives in your terminal.** You type requests like
-"explain this repo", "add tests", or "fix this stack trace"; Tau can read files,
-edit code, run commands, and keep a durable session history while streaming what
-it is doing.
+```mermaid
+flowchart LR
+    PI[Pi 0.84.1 TypeScript<br/>behavior authority] --> TESTS[Differential contracts]
+    TAU[Tau Python architecture] --> AI[tau_ai<br/>provider + thinking + usage]
+    TESTS --> AI
+    AI --> CORE[tau_agent<br/>loop + tools + events]
+    CORE --> SESSION[tau_coding<br/>CodingSession + JSONL + compaction]
+    SESSION --> UI[CLI / TUI / JSON / RPC]
+    CORE -. optional .-> MCP[Official MCP SDK adapter]
+```
 
-Tau is also meant to be read. It is a teaching project for understanding the
-shape of a coding-agent system without starting from a giant production
-codebase.
+The three original Tau boundaries remain intact:
 
 ```text
-tau_coding  →  tau_agent  →  tau_ai
+tau_ai      provider streaming, thinking, usage, replay, retry
+tau_agent   model -> tools -> results -> model loop
+tau_coding  prompt, resources, sessions, compaction, extensions, CLI/TUI
 ```
 
-- `tau_ai` translates model providers into Tau's provider-neutral stream.
-- `tau_agent` owns the portable brain: messages, tools, events, loop, harness,
-  and session primitives.
-- `tau_coding` wraps the brain as a real coding app: CLI, TUI, file/shell tools,
-  provider config, project instructions, skills, and on-disk sessions.
+## What this branch implements
 
-The important boundary is:
+| Surface | Implemented behavior |
+|---|---|
+| Core loop | Ordered events, parallel/sequential tools, source-ordered results, tool validation, tool lifecycle hooks, cancellation and termination |
+| Stateful harness | Separate steering/follow-up queues, one-at-a-time/all queue modes, safe continuation and settled-run ownership |
+| Provider layer | Thinking blocks, reasoning-token usage, cache accounting, reasoning replay, foreign tool-call ID normalization, abortable provider retry |
+| CodingSession | Append-only JSONL history, prompt/continue, retry settlement, overflow compaction/retry, branch/compaction summaries, current-state refresh before follow-on turns |
+| Prompt/resources | Pi-style system-prompt semantics, recursive skills, YAML 1.2 metadata, ignore rules, prompt templates and extension-provided resources |
+| Extensions | Context/prompt/provider/session/tool hooks and message replacement at the real runtime boundaries |
+| Tools | Default Pi order: `read`, `bash`, `edit`, `write` |
+| MCP | Optional streamable-HTTP adapter using the official Python MCP SDK; discovered tools become native `AgentTool` values |
+
+The implementation ledger links each Python surface to its Pi source and deterministic checks: [dev-notes/pi-0.84.1-parity-ledger.md](dev-notes/pi-0.84.1-parity-ledger.md).
+
+## Output limits and MCP are explicit
+
+The provider layer now carries model output limits correctly. It does not impose a new global output cap. The ERP-Bench runner explicitly matches the comparison profile:
 
 ```text
-AgentHarness = reusable brain
-CodingSession = coding-agent environment
-TUI = one possible frontend
+context window    128,000 tokens
+max model output   16,384 tokens
+default tools      read, bash, edit, write
+extra tools        MCP tools discovered at runtime
 ```
 
-The core does not know about Textual, Rich, local config paths, slash commands,
-or rendering. Frontends consume events.
+Normal Tau CLI sessions still use their selected provider/model metadata. MCP is opt-in through `McpToolSet`; it is not silently registered by the default CLI.
 
-## Install
+## Quick start
 
-Tau is published on PyPI as `tau-ai` and installs a `tau` command.
-It requires Python 3.12 or newer. The recommended installers use
-[`uv`](https://docs.astral.sh/uv/) and install it first when necessary.
-
-macOS and Linux:
+Requirements: Python 3.12+ and [`uv`](https://docs.astral.sh/uv/).
 
 ```bash
-curl -LsSf https://twotimespi.dev/install.sh | sh
-```
-
-Windows PowerShell:
-
-```powershell
-irm https://twotimespi.dev/install.ps1 | iex
-```
-
-The installers do not use `sudo`. They announce before installing `uv`, install
-Tau in an isolated tool environment, verify `tau --version`, and report if a
-shell restart is needed. You can [inspect the shell installer](https://twotimespi.dev/install.sh)
-or [PowerShell installer](https://twotimespi.dev/install.ps1) before running it.
-
-Already have a package manager? Install Tau directly:
-
-```bash
-uv tool install tau-ai
-# or
-pipx install tau-ai
-# or
-python -m pip install tau-ai
-```
-
-Then check it worked:
-
-```bash
-tau --version
-```
-
-Tau is also available on [conda-forge](https://conda-forge.org), and can be installed using [pixi](https://pixi.prefix.dev/latest/#installation):
-
-```bash
-pixi global install tau-ai
-```
-
-Upgrade a normal installation with:
-
-```bash
-tau update
-```
-
-For local development:
-
-```bash
-git clone https://github.com/huggingface/tau.git
-cd tau
+git clone https://github.com/Sanssssssssssssssss/pi-harness-python.git
+cd pi-harness-python
 uv sync --dev
 uv run tau --version
+uv run tau -p "summarize this repository"
 ```
 
-To make the checkout-backed command available globally, install it as an
-editable tool:
+Provider setup and the existing Tau UI remain available through `tau`, `/login`, and `/model`. See the [upstream Tau documentation](https://twotimespi.dev/) for those inherited surfaces.
+
+Run the focused parity checks:
 
 ```bash
-uv tool install --editable --force .
+uv run pytest -q \
+  tests/test_agent_loop.py \
+  tests/test_agent_harness.py \
+  tests/test_coding_session.py \
+  tests/test_pi_loop_parity.py \
+  tests/test_pi_session_retry.py \
+  tests/test_message_transform.py \
+  tests/test_mcp.py
+uv run ruff check src tests
 ```
 
-Run that command again after `git pull`. Editable installs expose source-code
-changes immediately, but the tool environment's package metadata, dependencies,
-and entry points are only refreshed when uv reinstalls the tool. Without the
-refresh, `tau --version` can still show the version from the previous install.
-
-## Quickstart
-
-Run Tau from the project you want it to work on:
-
-```bash
-cd my-project
-tau
-```
-
-Then type a request and press **Enter**:
-
-```text
-explain what this project does
-```
-
-One-shot print mode is useful for scripts and quick prompts:
-
-```bash
-tau -p "summarize the architecture"
-tau --cwd /path/to/project -p "find the CLI entry point"
-```
-
-Tau needs a model provider. Start Tau and connect one with `/login`:
-
-```bash
-tau
-```
-
-```text
-/login
-/login openai
-/login openai-codex
-/model
-```
-
-Tau ships with support for OpenAI, Anthropic, OpenAI Codex subscription auth,
-OpenRouter, Hugging Face, and custom OpenAI-compatible endpoints, including local
-models. See the [providers guide](https://twotimespi.dev/guides/providers-and-models/).
-
-The built-in catalog lives in `src/tau_coding/data/catalog.toml`; add your own
-providers and models by dropping a `~/.tau/catalog.toml` with the same schema —
-no code changes required.
-
-## What Tau can do
-
-- Interactive Textual TUI and non-interactive print mode.
-- Built-in coding tools: `read`, `write`, `edit`, and `bash`.
-- Durable JSONL sessions under `~/.tau/sessions/` with resume and branching.
-- Slash commands for login, model selection, sessions, compaction, export, theme,
-  and more.
-- Project instructions from `AGENTS.md`, `.tau/`, and `.agents/` resources.
-- User skills, prompt templates, and custom TUI themes.
-- Context accounting, manual compaction, and optional automatic compaction.
-- Provider-neutral event rendering for Rich, plain text, JSON, transcripts, and
-  custom frontends.
-
-## Philosophy
-
-Tau follows a few rules:
-
-- **Small layers beat magic.** Each package has one job and can be read alone.
-- **Events are the contract.** Providers, renderers, the TUI, and custom
-  frontends meet at a typed event stream.
-- **The core stays portable.** The reusable harness does not depend on the CLI,
-  Textual, Rich, or Tau's file layout.
-- **Tools are ordinary typed functions.** A tool is a schema plus an async
-  executor returning a structured result.
-- **Sessions are durable and inspectable.** History is append-only JSONL; active
-  context can be compacted without rewriting the record.
-- **Documentation follows implementation.** The public docs explain the result;
-  `dev-notes/` preserves the phase-by-phase build journal.
-
-## Use Tau as a library
+Minimal MCP use:
 
 ```python
-from tau_agent import AgentHarness, AgentHarnessConfig
+from tau_agent import McpToolSet
 
-harness = AgentHarness(
-    AgentHarnessConfig(
-        provider=provider,
-        model="my-model",
-        system="You are a helpful coding agent.",
-        tools=tools,
-    )
-)
-
-async for event in harness.prompt("Explain this package"):
-    print(event)
+async with McpToolSet("http://127.0.0.1:8000/mcp") as mcp:
+    tools = mcp.tools
 ```
 
-Because the harness emits events instead of rendering UI directly, the same core
-can drive the built-in TUI, print mode, or a frontend you build yourself.
+## Current evidence
 
-## Development
+Deterministic tests cover the translated loop/session contracts. A bounded real-model comparison also ran Pi and this Python harness against the same ERP-Bench task, model profile, Odoo MCP server and verifier:
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for project philosophy, layer boundaries, testing expectations, and pull request guidelines.
+| Metric | Pi 0.84.1 | Python harness |
+|---|---:|---:|
+| ERP-Bench reward | 100 | 100 |
+| Model calls | 71 | 67 |
+| MCP calls | 164 | 100 |
+| Output tokens | 83,567 | 61,425 |
+| Reasoning tokens | 63,089 | 47,221 |
+| Agent wall time | 761.8 s | 640.0 s |
 
-```bash
-uv sync --dev
-uv run pytest
-uv run ruff check .
-uv run ruff format --check .
-uv run mypy
-```
+This is one task, not a quality ranking. It proves that the full model/tool/session/verifier chain can complete and leaves comparable receipts. The Python run did not trigger compaction; compaction parity is currently deterministic-test evidence only.
 
-Run Tau from the checkout:
+## Known limits
 
-```bash
-uv run tau
-uv run tau -p "explain this repo"
-```
+- This is behavioral translation, not a byte-for-byte or API-compatible Python port of every Pi package.
+- Pi's complete TUI/protocol/client/server/telemetry ecosystem has not been reproduced; Tau's existing interfaces remain in those positions.
+- The full session fork/label/migration matrix and every provider-specific streaming variant are not yet covered.
+- System-prompt behavior is aligned at the core boundary, but Tau naming, documentation paths and extension seams intentionally remain.
+- Dynamic mid-session model/thinking switches and some extension UI/command surfaces need more parity evidence.
+- The real ERP comparison is a single bounded sample. No benchmark-wide performance claim is made.
+- MCP transport is generic, but the included benchmark script is experimental and Odoo-oriented.
 
-Run the Hugo documentation site:
+## Upstream and license
 
-```bash
-cd website
-hugo server -D
-```
+This repository is based on [huggingface/tau](https://github.com/huggingface/tau) commit `fc09dc8e0c82cea4642a5b93d3d231ae59787cbf` and translates behavior from Pi commit `534bcbffb7e1e7551d9ee3572dfeb278e203e493` (`@earendil-works/pi-coding-agent` 0.84.1).
 
-Open <http://localhost:1313/>. Build with `hugo --minify`.
-
-## Documentation
-
-User docs are published at <https://twotimespi.dev/> and live in
-`website/content/`.
-
-Useful entry points:
-
-- [What is Tau?](https://twotimespi.dev/what-is-tau/)
-- [Quickstart](https://twotimespi.dev/quickstart/)
-- [Core concepts](https://twotimespi.dev/concepts/)
-- [Architecture overview](https://twotimespi.dev/internals/architecture/)
-- [The agent loop & events](https://twotimespi.dev/internals/agent-loop/)
-- [CLI reference](https://twotimespi.dev/reference/cli/)
-
-Tau is under active development. The implementation roadmap is tracked in
-[GitHub issue #1](https://github.com/huggingface/tau/issues/1).
-
-## License
-
-Tau is released under the [MIT License](LICENSE).
+Tau and Pi are MIT-licensed. The original Tau license is preserved in [LICENSE](LICENSE); translated Pi portions and attribution are documented in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

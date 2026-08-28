@@ -11,7 +11,8 @@ import pytest
 
 from pi_event_helpers import assistant_done, assistant_start
 from tau_agent import AssistantMessage, ToolCall, UserMessage
-from tau_agent.messages import AgentMessage, assistant_content
+from tau_agent.loop import AfterToolCallContext, AgentContext, BeforeToolCallContext
+from tau_agent.messages import AgentMessage, CustomMessage, Usage, assistant_content
 from tau_agent.session import CustomEntry, JsonlSessionStorage, LeafEntry, MessageEntry
 from tau_agent.tools import AgentTool, AgentToolResult
 from tau_agent.types import JSONValue
@@ -26,6 +27,8 @@ from tau_coding import (
     TauResourcePaths,
 )
 from tau_coding.extensions import (
+    BeforeAgentStartResult,
+    ContextHookResult,
     CustomMessageView,
     DynamicProvider,
     ExtensionAPI,
@@ -39,6 +42,7 @@ from tau_coding.extensions import (
     ProviderModelSnapshot,
     ProviderRefreshContext,
     RefreshModels,
+    ResourcesDiscoverResult,
     ToolCallHookResult,
     ToolResultHookResult,
     discover_extensions,
@@ -945,7 +949,10 @@ def setup(tau):
         encoding="utf-8",
     )
     target_b.write_text("def setup(tau):\n    pass\n", encoding="utf-8")
-    entry.symlink_to(target_a)
+    try:
+        entry.symlink_to(target_a)
+    except OSError:
+        pytest.skip("file symlinks unavailable")
     runtime = ExtensionRuntime()
 
     runtime.load(paths, extra_paths=(entry,), include_resource_dirs=False)
@@ -1094,11 +1101,11 @@ async def test_tool_call_hook_can_block(tmp_path: Path) -> None:
     )
 
     tool = _make_tool("danger", content="ran")
-    wrapped = runtime.compose_tools([tool])[0]
-    result = await wrapped.execute("call-1", {})
+    context = _before_tool_context(tool, {})
+    result = await runtime.before_tool_call(context)
 
-    assert result.text.startswith("Tool call blocked:")
-    assert "not allowed" in result.text
+    assert result is not None and result.block
+    assert result.reason == "not allowed"
 
 
 async def test_tool_call_hook_can_rewrite_arguments(tmp_path: Path) -> None:
@@ -1115,8 +1122,9 @@ async def test_tool_call_hook_can_rewrite_arguments(tmp_path: Path) -> None:
         return AgentToolResult(content="ok")
 
     tool = AgentTool(name="echo", label="echo", description="d", parameters={}, execute_fn=executor)
-    wrapped = runtime.compose_tools([tool])[0]
-    await wrapped.execute("call-1", {"who": "world"})
+    context = _before_tool_context(tool, {"who": "world"})
+    await runtime.before_tool_call(context)
+    await tool.execute("call-1", context.args)
 
     assert seen == [{"who": "tau"}]
 
@@ -1135,8 +1143,9 @@ async def test_tool_call_hook_can_clear_arguments(tmp_path: Path) -> None:
         return AgentToolResult(content="ok")
 
     tool = AgentTool(name="echo", label="echo", description="d", parameters={}, execute_fn=executor)
-    wrapped = runtime.compose_tools([tool])[0]
-    await wrapped.execute("call-1", {"who": "world"})
+    context = _before_tool_context(tool, {"who": "world"})
+    await runtime.before_tool_call(context)
+    await tool.execute("call-1", context.args)
 
     assert seen == [{}]
 
@@ -1202,11 +1211,11 @@ async def test_raising_tool_call_hook_blocks_fail_safe(tmp_path: Path) -> None:
 
     api.on("tool_call", bad_hook)
 
-    wrapped = runtime.compose_tools([_make_tool("x", content="ran")])[0]
-    result = await wrapped.execute("call-1", {})
+    tool = _make_tool("x", content="ran")
+    result = await runtime.before_tool_call(_before_tool_context(tool, {}))
 
-    assert result.text.startswith("Tool call blocked:")
-    assert "hook failed" in result.text
+    assert result is not None and result.block
+    assert result.reason is not None and "hook failed" in result.reason
 
 
 async def test_tool_result_hook_transforms_result(tmp_path: Path) -> None:
@@ -1214,10 +1223,73 @@ async def test_tool_result_hook_transforms_result(tmp_path: Path) -> None:
     api = _register_inline_extension(runtime, "transform")
     api.on("tool_result", lambda event, context: ToolResultHookResult(content="redacted"))
 
-    wrapped = runtime.compose_tools([_make_tool("x", content="secret")])[0]
-    result = await wrapped.execute("call-1", {})
+    tool = _make_tool("x", content="secret")
+    result = await tool.execute("call-1", {})
+    override = await runtime.after_tool_call(_after_tool_context(tool, {}, result))
 
-    assert result.text == "redacted"
+    assert override is not None and override.content is not None
+    assert override.content[0].text == "redacted"
+
+
+async def test_pi_core_extension_hooks_chain_and_keep_tool_identity(tmp_path: Path) -> None:
+    runtime = ExtensionRuntime()
+    runtime.bind(RecordingSession(tmp_path))  # type: ignore[arg-type]
+    first = _register_inline_extension(runtime, "first")
+    second = _register_inline_extension(runtime, "second")
+    seen: list[tuple[str, bool]] = []
+
+    first.on(
+        "context",
+        lambda event, context: ContextHookResult(
+            messages=(*event.messages, UserMessage(content="extension context"))
+        ),
+    )
+    second.on(
+        "before_agent_start",
+        lambda event, context: BeforeAgentStartResult(
+            message=CustomMessage(custom_type="note", content="injected"),
+            system_prompt=event.system_prompt + " extended",
+        ),
+    )
+    second.on(
+        "tool_result",
+        lambda event, context: (
+            seen.append((event.tool_call_id, event.is_error)),
+            ToolResultHookResult(is_error=True, usage=Usage(output=2), terminate=True),
+        )[1],
+    )
+
+    transformed = await runtime.transform_context([UserMessage(content="base")])
+    before = await runtime.before_agent_start("go", "system")
+    tool = _make_tool("x", content="ok")
+    result = await tool.execute("call-1", {})
+    override = await runtime.after_tool_call(_after_tool_context(tool, {}, result))
+
+    assert [message.text for message in transformed] == ["base", "extension context"]
+    assert before.system_prompt == "system extended"
+    assert [message.text for message in before.messages] == ["injected"]
+    assert seen == [("call-1", False)]
+    assert override is not None and override.is_error is True
+    assert override.usage == Usage(output=2)
+    assert override.terminate is True
+
+
+async def test_resources_discover_resolves_relative_to_extension(tmp_path: Path) -> None:
+    runtime = ExtensionRuntime()
+    runtime.bind(RecordingSession(tmp_path))  # type: ignore[arg-type]
+    api = _register_inline_extension(runtime, "resources")
+    api.on(
+        "resources_discover",
+        lambda event, context: ResourcesDiscoverResult(
+            skill_paths=("skills",), prompt_paths=("prompts",)
+        ),
+    )
+
+    skills, prompts, themes = await runtime.emit_resources_discover("startup")
+
+    assert skills == (Path("/virtual/skills"),)
+    assert prompts == (Path("/virtual/prompts"),)
+    assert themes == ()
 
 
 async def test_raising_tool_result_hook_keeps_result(tmp_path: Path) -> None:
@@ -1229,9 +1301,11 @@ async def test_raising_tool_result_hook_keeps_result(tmp_path: Path) -> None:
 
     api.on("tool_result", bad_hook)
 
-    wrapped = runtime.compose_tools([_make_tool("x", content="fine")])[0]
-    result = await wrapped.execute("call-1", {})
+    tool = _make_tool("x", content="fine")
+    result = await tool.execute("call-1", {})
+    override = await runtime.after_tool_call(_after_tool_context(tool, {}, result))
 
+    assert override is None
     assert result.text == "fine"
     assert any("tool_result" in diag.message for diag in runtime.diagnostics)
 
@@ -1435,6 +1509,49 @@ async def test_message_end_event_surfaces_provider_usage(tmp_path: Path) -> None
     assert observed.cache_read == 10
     assert observed.reasoning == 2
     assert observed.total_tokens == 35
+
+
+async def test_message_end_replacement_chains_into_state_storage_and_next_context(
+    tmp_path: Path,
+) -> None:
+    body = (
+        "from tau_agent import TextContent, UserMessage\n"
+        "from tau_coding.extensions import MessageEndHookResult\n\n\n"
+        "def _replace(event, suffix):\n"
+        "    if event.message.role != 'assistant':\n"
+        "        return None\n"
+        "    replacement = event.message.model_copy(update={\n"
+        "        'content': [TextContent(text=event.message.text + suffix)]\n"
+        "    })\n"
+        "    return MessageEndHookResult(message=replacement)\n\n\n"
+        "def setup(tau):\n"
+        "    tau.on('message_end', lambda event, context: _replace(event, '|one'))\n"
+        "    tau.on('message_end', lambda event, context: "
+        "MessageEndHookResult(message=UserMessage(content='wrong-role')) "
+        "if event.message.role == 'assistant' else None)\n"
+        "    tau.on('message_end', lambda event, context: _replace(event, '|two'))\n"
+    )
+    provider = FakeProvider(
+        [
+            [assistant_start(model="fake"), assistant_done(AssistantMessage(content="A"))],
+            [assistant_start(model="fake"), assistant_done(AssistantMessage(content="C"))],
+        ]
+    )
+    session = await CodingSession.load(_session_config(tmp_path, provider, extension_body=body))
+
+    _ = [event async for event in session.prompt("first")]
+    _ = [event async for event in session.prompt("second")]
+
+    assistants = [message.text for message in session.messages if message.role == "assistant"]
+    persisted = [
+        entry.message.text
+        for entry in await session.storage.read_all()
+        if isinstance(entry, MessageEntry) and entry.message.role == "assistant"
+    ]
+    second_context = [message.text for message in provider.calls[1][2]]
+    assert assistants == persisted == ["A|one|two", "C|one|two"]
+    assert "A|one|two" in second_context
+    assert any("same role" in diagnostic.message for diagnostic in session.resource_diagnostics)
 
 
 async def test_raising_event_handler_is_recorded(tmp_path: Path) -> None:
@@ -1939,6 +2056,33 @@ def _make_tool(name: str, *, content: str) -> AgentTool:
     return AgentTool(name=name, label=name, description="d", parameters={}, execute_fn=executor)
 
 
+def _before_tool_context(
+    tool: AgentTool, arguments: dict[str, JSONValue]
+) -> BeforeToolCallContext:
+    return BeforeToolCallContext(
+        AssistantMessage(),
+        ToolCall(id="call-1", name=tool.name, arguments=arguments),
+        arguments,
+        AgentContext(system="", messages=[], tools=[tool]),
+    )
+
+
+def _after_tool_context(
+    tool: AgentTool,
+    arguments: dict[str, JSONValue],
+    result: AgentToolResult,
+) -> AfterToolCallContext:
+    before = _before_tool_context(tool, arguments)
+    return AfterToolCallContext(
+        before.assistant_message,
+        before.tool_call,
+        before.args,
+        result,
+        False,
+        before.context,
+    )
+
+
 # -- coding-session integration ---------------------------------------------------
 
 
@@ -2411,7 +2555,14 @@ async def test_extension_tool_call_block_reaches_model(tmp_path: Path) -> None:
                 assistant_done(
                     message=AssistantMessage(
                         content=assistant_content(
-                            "", [ToolCall(id="call-1", name="bash", arguments={"command": "ls"})]
+                            "",
+                            [
+                                ToolCall(
+                                    id="call-1",
+                                    name="bash",
+                                    arguments={"command": "ls", "description": "Listing files"},
+                                )
+                            ],
                         )
                     )
                 ),
@@ -2430,7 +2581,7 @@ async def test_extension_tool_call_block_reaches_model(tmp_path: Path) -> None:
         message for message in session.messages if getattr(message, "role", None) == "toolResult"
     ]
     assert len(tool_results) == 1
-    assert tool_results[0].is_error is False
+    assert tool_results[0].is_error is True
     assert "no shell today" in tool_results[0].text
 
 

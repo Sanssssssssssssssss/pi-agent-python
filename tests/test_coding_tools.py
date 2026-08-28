@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import shlex
+import sys
 from io import BytesIO
 from pathlib import Path
 from time import monotonic
@@ -22,6 +23,10 @@ from tau_coding import (
     create_write_tool,
 )
 from tau_coding.image_processing import DEFAULT_MAX_SOURCE_IMAGE_BYTES
+
+requires_posix_shell = pytest.mark.skipif(
+    sys.platform == "win32", reason="bash lifecycle assertions require POSIX"
+)
 
 
 def image_bytes(format_name: str = "PNG", *, size: tuple[int, int] = (8, 6)) -> bytes:
@@ -52,11 +57,11 @@ class FakeCancellationToken:
 async def test_create_coding_tools_returns_initial_tool_set(tmp_path: Path) -> None:
     tools = create_coding_tools(cwd=tmp_path)
 
-    assert [tool.name for tool in tools] == ["read", "write", "edit", "bash"]
+    assert [tool.name for tool in tools] == ["read", "bash", "edit", "write"]
     edit_tool = tools[2]
     assert edit_tool.prompt_snippet is not None
     assert "Use edit for precise changes" in edit_tool.prompt_guidelines[0]
-    assert "present-participle description" in tools[3].prompt_guidelines[0]
+    assert "present-participle description" in tools[1].prompt_guidelines[0]
 
 
 def test_bash_tool_schema_requires_display_description(tmp_path: Path) -> None:
@@ -359,8 +364,13 @@ async def test_edit_tool_requires_unique_matches(tmp_path: Path) -> None:
 @pytest.mark.anyio
 async def test_bash_tool_tolerates_missing_required_display_description(tmp_path: Path) -> None:
     tool = create_bash_tool(cwd=tmp_path)
+    command = (
+        'powershell -NoProfile -Command "[Console]::Write(\'hello\')"'
+        if sys.platform == "win32"
+        else "printf hello"
+    )
 
-    result = await tool.execute("test-call", {"command": "printf hello"})
+    result = await tool.execute("test-call", {"command": command})
 
     assert result.text
     assert result.text == "hello"
@@ -369,6 +379,7 @@ async def test_bash_tool_tolerates_missing_required_display_description(tmp_path
     assert result.details["timed_out"] is False
 
 
+@requires_posix_shell
 @pytest.mark.anyio
 async def test_create_coding_tools_applies_shell_command_prefix(
     tmp_path: Path,
@@ -387,6 +398,7 @@ async def test_create_coding_tools_applies_shell_command_prefix(
     assert result.details["shell_command_prefix_applied"] is True
 
 
+@requires_posix_shell
 @pytest.mark.anyio
 async def test_bash_tool_applies_opt_in_shell_command_prefix(tmp_path: Path) -> None:
     rc_path = tmp_path / ".zshrc"
@@ -407,6 +419,7 @@ async def test_bash_tool_applies_opt_in_shell_command_prefix(tmp_path: Path) -> 
     assert not marker.exists()
 
 
+@requires_posix_shell
 @pytest.mark.anyio
 async def test_bash_tool_reports_timeout(tmp_path: Path) -> None:
     tool = create_bash_tool(cwd=tmp_path)
@@ -419,6 +432,7 @@ async def test_bash_tool_reports_timeout(tmp_path: Path) -> None:
     assert "timed out" in result.text
 
 
+@requires_posix_shell
 @pytest.mark.anyio
 async def test_bash_tool_timeout_kills_shell_children(tmp_path: Path) -> None:
     tool = create_bash_tool(cwd=tmp_path)
@@ -438,6 +452,7 @@ async def test_bash_tool_timeout_kills_shell_children(tmp_path: Path) -> None:
     assert not marker.exists()
 
 
+@requires_posix_shell
 @pytest.mark.anyio
 async def test_bash_tool_cancellation_kills_shell_children(tmp_path: Path) -> None:
     tool = create_bash_tool(cwd=tmp_path)

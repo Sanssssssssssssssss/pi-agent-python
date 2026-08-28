@@ -14,15 +14,20 @@ from typing import Literal, Protocol, cast
 import httpx
 
 import tau_coding.built_in_extensions as built_in_extension_registry
-from tau_agent.events import AgentEvent, AgentStartEvent
+from tau_agent.events import AgentEvent, AgentStartEvent, MessageEndEvent
 from tau_agent.events import TurnEndEvent as AgentTurnEndEvent
 from tau_agent.events import TurnStartEvent as AgentTurnStartEvent
-from tau_agent.messages import AgentMessage, TextContent
+from tau_agent.loop import (
+    AfterToolCallContext,
+    AfterToolCallResult,
+    BeforeToolCallContext,
+    BeforeToolCallResult,
+)
+from tau_agent.messages import AgentMessage, TextContent, convert_to_llm
 from tau_agent.tools import (
     AgentTool,
     AgentToolResult,
     ToolCancellationToken,
-    ToolUpdateCallback,
 )
 from tau_agent.types import JSONValue
 from tau_coding.built_in_extensions import BuiltInExtension, BuiltInExtensionContext
@@ -38,6 +43,14 @@ from tau_coding.extensions.api import (
     AGENT_EVENT_TYPES,
     AGENT_EVENT_WILDCARD,
     LIFECYCLE_EVENT_TYPES,
+    AfterProviderResponseEvent,
+    BeforeAgentStartEvent,
+    BeforeAgentStartOutcome,
+    BeforeAgentStartResult,
+    BeforeProviderHeadersEvent,
+    BeforeProviderRequestEvent,
+    ContextHookEvent,
+    ContextHookResult,
     CustomMessageView,
     ExtensionAPI,
     ExtensionCommandContext,
@@ -48,13 +61,25 @@ from tau_coding.extensions.api import (
     ExtensionHandler,
     InputEvent,
     InputHookResult,
+    MessageEndHookResult,
     MessageRenderer,
     MessageRenderOptions,
     NullUiBridge,
     RegisteredExtension,
+    ResourcesDiscoverEvent,
+    ResourcesDiscoverResult,
+    SessionBeforeCompactEvent,
+    SessionBeforeCompactResult,
+    SessionBeforeForkEvent,
+    SessionBeforeOperationResult,
+    SessionBeforeSwitchEvent,
+    SessionBeforeTreeEvent,
+    SessionBeforeTreeResult,
+    SessionCompactEvent,
     SessionLifecycleReason,
     SessionShutdownEvent,
     SessionStartEvent,
+    SessionTreeEvent,
     ToolCallHookEvent,
     ToolCallHookResult,
     ToolResultHookEvent,
@@ -255,6 +280,17 @@ class ExtensionRuntime:
         self._extension_turn_index = 0
 
     # -- loading -----------------------------------------------------------
+
+    @property
+    def provider_hooks(self) -> ExtensionRuntime | None:
+        """Return this runtime only when a Pi provider hook is registered."""
+        names = (
+            "before_provider_request",
+            "before_provider_headers",
+            "after_provider_response",
+        )
+        registered = any(next(self._handlers_for(name), None) is not None for name in names)
+        return self if registered else None
 
     def load(
         self,
@@ -775,7 +811,9 @@ class ExtensionRuntime:
 
     def attach_harness_listener(
         self,
-        subscribe: Callable[[Callable[[AgentEvent], Awaitable[None] | None]], Callable[[], None]],
+        subscribe: Callable[
+            [Callable[[AgentEvent, object], Awaitable[None] | None]], Callable[[], None]
+        ],
     ) -> None:
         """Subscribe the event fan-out to a harness, replacing any prior one."""
         if self._harness_unsubscribe is not None:
@@ -962,7 +1000,7 @@ class ExtensionRuntime:
     # -- tools ----------------------------------------------------------------
 
     def compose_tools(self, builtin_tools: Sequence[AgentTool]) -> list[AgentTool]:
-        """Merge built-in and extension tools, then wrap all with hook seams.
+        """Merge built-in and extension tools using Pi's name-based override rule.
 
         Extension tools override built-ins with the same name in place;
         extension-only tools append in registration order.
@@ -973,52 +1011,60 @@ class ExtensionRuntime:
             override = extension_tools.pop(tool.name, None)
             merged.append(override.tool if override is not None else tool)
         merged.extend(registration.tool for registration in extension_tools.values())
-        return [self._wrap_tool(tool) for tool in merged]
+        return merged
 
-    def _wrap_tool(self, tool: AgentTool) -> AgentTool:
-        async def executor(
-            tool_call_id: str,
-            arguments: Mapping[str, JSONValue],
-            signal: ToolCancellationToken | None = None,
-            on_update: ToolUpdateCallback | None = None,
-        ) -> AgentToolResult:
-            call_outcome = await self._run_tool_call_hooks(tool.name, arguments)
-            if call_outcome.block:
-                reason = call_outcome.reason or "blocked by an extension"
-                return AgentToolResult(content=[TextContent(text=f"Tool call blocked: {reason}")])
-            effective_arguments = (
-                call_outcome.arguments if call_outcome.arguments is not None else arguments
-            )
-            result = await tool.execute(
-                tool_call_id,
-                effective_arguments,
-                signal=signal,
-                on_update=on_update,
-            )
-            return await self._run_tool_result_hooks(tool.name, effective_arguments, result)
-
-        return AgentTool(
-            name=tool.name,
-            label=tool.label,
-            description=tool.description,
-            parameters=tool.parameters,
-            execute_fn=executor,
-            prompt_snippet=tool.prompt_snippet,
-            prompt_guidelines=tool.prompt_guidelines,
-            prepare_arguments=tool.prepare_arguments,
-            execution_mode=tool.execution_mode,
-            render_call=tool.render_call,
-            render_result=tool.render_result,
+    async def before_tool_call(
+        self,
+        context: BeforeToolCallContext,
+        signal: ToolCancellationToken | None = None,
+    ) -> BeforeToolCallResult | None:
+        """Run Pi-style extension interception after validation and before execution."""
+        del signal
+        outcome = await self._run_tool_call_hooks(
+            context.tool_call.id, context.tool_call.name, context.args
         )
+        if outcome.arguments is not None:
+            context.args.clear()
+            context.args.update(outcome.arguments)
+        if outcome.block:
+            return BeforeToolCallResult(
+                block=True,
+                reason=outcome.reason,
+                terminate=outcome.terminate,
+            )
+        return None
+
+    async def after_tool_call(
+        self,
+        context: AfterToolCallContext,
+        signal: ToolCancellationToken | None = None,
+    ) -> AfterToolCallResult | None:
+        """Run Pi-style result interception at the agent-loop lifecycle seam."""
+        del signal
+        result = await self._run_tool_result_hooks(
+            context.tool_call.id,
+            context.tool_call.name,
+            context.args,
+            context.result,
+            is_error=context.is_error,
+        )
+        if result is None:
+            return None
+        return result
 
     async def _run_tool_call_hooks(
         self,
+        tool_call_id: str,
         tool_name: str,
         arguments: Mapping[str, JSONValue],
     ) -> ToolCallHookResult:
         effective: Mapping[str, JSONValue] = arguments
         for owner, handler in self._handlers_for("tool_call"):
-            event = ToolCallHookEvent(tool_name=tool_name, arguments=effective)
+            event = ToolCallHookEvent(
+                tool_call_id=tool_call_id,
+                tool_name=tool_name,
+                arguments=effective,
+            )
             try:
                 result = await _resolve(handler(event, self._fresh_context(owner.source_id)))
             except Exception as exc:  # noqa: BLE001 - fail-safe: an error blocks the tool
@@ -1033,7 +1079,11 @@ class ExtensionRuntime:
                 self._record_bad_result(owner.name, "tool_call", result)
                 continue
             if result.block:
-                return ToolCallHookResult(block=True, reason=result.reason)
+                return ToolCallHookResult(
+                    block=True,
+                    reason=result.reason,
+                    terminate=result.terminate,
+                )
             if result.arguments is not None:
                 effective = result.arguments
         if effective is arguments:
@@ -1042,13 +1092,25 @@ class ExtensionRuntime:
 
     async def _run_tool_result_hooks(
         self,
+        tool_call_id: str,
         tool_name: str,
         arguments: Mapping[str, JSONValue],
         result: AgentToolResult,
-    ) -> AgentToolResult:
+        *,
+        is_error: bool,
+    ) -> AfterToolCallResult | None:
         current = result
+        current_is_error = is_error
+        current_terminate = result.terminate
+        modified = False
         for owner, handler in self._handlers_for("tool_result"):
-            event = ToolResultHookEvent(tool_name=tool_name, arguments=arguments, result=current)
+            event = ToolResultHookEvent(
+                tool_call_id=tool_call_id,
+                tool_name=tool_name,
+                arguments=arguments,
+                result=current,
+                is_error=current_is_error,
+            )
             try:
                 outcome = await _resolve(handler(event, self._fresh_context(owner.source_id)))
             except Exception as exc:  # noqa: BLE001 - result hooks are observational-ish
@@ -1061,12 +1123,32 @@ class ExtensionRuntime:
                 continue
             updates: dict[str, object] = {}
             if outcome.content is not None:
-                updates["content"] = [TextContent(text=outcome.content)]
+                updates["content"] = (
+                    [TextContent(text=outcome.content)]
+                    if isinstance(outcome.content, str)
+                    else outcome.content
+                )
             if outcome.details is not None:
                 updates["details"] = outcome.details
+            if outcome.usage is not None:
+                updates["usage"] = outcome.usage
+            if outcome.terminate is not None:
+                updates["terminate"] = outcome.terminate
+                current_terminate = outcome.terminate
+            if outcome.is_error is not None:
+                current_is_error = outcome.is_error
+            modified = modified or bool(updates) or outcome.is_error is not None
             if updates:
                 current = current.model_copy(update=updates)
-        return current
+        if not modified:
+            return None
+        return AfterToolCallResult(
+            content=current.content,
+            details=current.details,
+            usage=current.usage,
+            terminate=current_terminate,
+            is_error=current_is_error,
+        )
 
     # -- commands ---------------------------------------------------------------
 
@@ -1146,6 +1228,226 @@ class ExtensionRuntime:
         """Dispatch `session_shutdown` to subscribed extensions."""
         await self._emit_lifecycle("session_shutdown", SessionShutdownEvent(reason=reason))
 
+    async def emit_resources_discover(
+        self, reason: Literal["startup", "reload"]
+    ) -> tuple[tuple[Path, ...], tuple[Path, ...], tuple[Path, ...]]:
+        """Collect Pi resource contributions in extension/handler order."""
+        skills: list[Path] = []
+        prompts: list[Path] = []
+        themes: list[Path] = []
+        for owner, handler in self._handlers_for("resources_discover"):
+            try:
+                result = await _resolve(
+                    handler(
+                        ResourcesDiscoverEvent(cwd=self.session_view.cwd, reason=reason),
+                        self._fresh_context(owner.source_id),
+                    )
+                )
+            except Exception as exc:  # noqa: BLE001 - extensions are isolated
+                self._record_runtime_failure(owner.name, "resources_discover", exc)
+                continue
+            if result is None:
+                continue
+            if not isinstance(result, ResourcesDiscoverResult):
+                self._record_bad_result(owner.name, "resources_discover", result)
+                continue
+            base = owner.path.parent if owner.path is not None else self.session_view.cwd
+            for target, values in (
+                (skills, result.skill_paths),
+                (prompts, result.prompt_paths),
+                (themes, result.theme_paths),
+            ):
+                for value in values:
+                    path = Path(value).expanduser()
+                    target.append(path if path.is_absolute() else base / path)
+        return tuple(skills), tuple(prompts), tuple(themes)
+
+    async def transform_context(
+        self,
+        messages: list[AgentMessage],
+        signal: ToolCancellationToken | None = None,
+    ) -> Sequence[AgentMessage]:
+        """Chain Pi ``context`` hooks, then perform coding-message conversion."""
+        del signal
+        current = list(messages)
+        for owner, handler in self._handlers_for("context"):
+            try:
+                result = await _resolve(
+                    handler(
+                        ContextHookEvent(messages=list(current)),
+                        self._fresh_context(owner.source_id),
+                    )
+                )
+            except Exception as exc:  # noqa: BLE001 - extensions are isolated
+                self._record_runtime_failure(owner.name, "context", exc)
+                continue
+            if result is None:
+                continue
+            if not isinstance(result, ContextHookResult):
+                self._record_bad_result(owner.name, "context", result)
+                continue
+            if result.messages is not None:
+                current = list(result.messages)
+        return convert_to_llm(current)
+
+    async def before_agent_start(
+        self,
+        prompt: str,
+        system_prompt: str,
+    ) -> BeforeAgentStartOutcome:
+        """Chain Pi's per-run message injection and system-prompt override."""
+        current_system = system_prompt
+        messages = []
+        modified = False
+        for owner, handler in self._handlers_for("before_agent_start"):
+            try:
+                result = await _resolve(
+                    handler(
+                        BeforeAgentStartEvent(
+                            prompt=prompt,
+                            system_prompt=current_system,
+                        ),
+                        self._fresh_context(owner.source_id),
+                    )
+                )
+            except Exception as exc:  # noqa: BLE001 - extensions are isolated
+                self._record_runtime_failure(owner.name, "before_agent_start", exc)
+                continue
+            if result is None:
+                continue
+            if not isinstance(result, BeforeAgentStartResult):
+                self._record_bad_result(owner.name, "before_agent_start", result)
+                continue
+            if result.message is not None:
+                messages.append(result.message)
+            if result.system_prompt is not None:
+                current_system = result.system_prompt
+                modified = True
+        return BeforeAgentStartOutcome(
+            messages=tuple(messages),
+            system_prompt=current_system if modified else None,
+        )
+
+    async def before_session_switch(
+        self,
+        reason: Literal["new", "resume"],
+        target_session_file: Path | None = None,
+    ) -> bool:
+        return await self._cancelled_by_session_hook(
+            "session_before_switch",
+            SessionBeforeSwitchEvent(reason=reason, target_session_file=target_session_file),
+        )
+
+    async def before_session_fork(self, entry_id: str, position: Literal["before", "at"]) -> bool:
+        return await self._cancelled_by_session_hook(
+            "session_before_fork",
+            SessionBeforeForkEvent(entry_id=entry_id, position=position),
+        )
+
+    async def before_session_compact(
+        self, event: SessionBeforeCompactEvent
+    ) -> SessionBeforeCompactResult:
+        current = SessionBeforeCompactResult()
+        for owner, handler in self._handlers_for("session_before_compact"):
+            try:
+                result = await _resolve(handler(event, self._fresh_context(owner.source_id)))
+            except Exception as exc:  # noqa: BLE001 - extensions are isolated
+                self._record_runtime_failure(owner.name, "session_before_compact", exc)
+                continue
+            if result is None:
+                continue
+            if not isinstance(result, SessionBeforeCompactResult):
+                self._record_bad_result(owner.name, "session_before_compact", result)
+                continue
+            current = result
+            if result.cancel:
+                break
+        return current
+
+    async def before_session_tree(
+        self, event: SessionBeforeTreeEvent
+    ) -> SessionBeforeTreeResult:
+        current = SessionBeforeTreeResult()
+        for owner, handler in self._handlers_for("session_before_tree"):
+            try:
+                result = await _resolve(handler(event, self._fresh_context(owner.source_id)))
+            except Exception as exc:  # noqa: BLE001 - extensions are isolated
+                self._record_runtime_failure(owner.name, "session_before_tree", exc)
+                continue
+            if result is None:
+                continue
+            if not isinstance(result, SessionBeforeTreeResult):
+                self._record_bad_result(owner.name, "session_before_tree", result)
+                continue
+            current = result
+            if result.cancel:
+                break
+        return current
+
+    async def emit_session_compact(self, event: SessionCompactEvent) -> None:
+        await self._emit_lifecycle("session_compact", event)
+
+    async def emit_session_tree(self, event: SessionTreeEvent) -> None:
+        await self._emit_lifecycle("session_tree", event)
+
+    async def before_provider_request(self, payload: object) -> object:
+        """Chain provider payload replacements exactly as Pi's runner does."""
+        current = payload
+        for owner, handler in self._handlers_for("before_provider_request"):
+            try:
+                result = await _resolve(
+                    handler(
+                        BeforeProviderRequestEvent(payload=current),
+                        self._fresh_context(owner.source_id),
+                    )
+                )
+            except Exception as exc:  # noqa: BLE001 - extensions are isolated
+                self._record_runtime_failure(owner.name, "before_provider_request", exc)
+                continue
+            if result is not None:
+                current = result
+        return current
+
+    async def before_provider_headers(
+        self, headers: dict[str, str | None]
+    ) -> dict[str, str | None]:
+        """Let provider-header handlers mutate one shared mapping in place."""
+        for owner, handler in self._handlers_for("before_provider_headers"):
+            try:
+                await _resolve(
+                    handler(
+                        BeforeProviderHeadersEvent(headers=headers),
+                        self._fresh_context(owner.source_id),
+                    )
+                )
+            except Exception as exc:  # noqa: BLE001 - extensions are isolated
+                self._record_runtime_failure(owner.name, "before_provider_headers", exc)
+        return headers
+
+    async def after_provider_response(
+        self, status: int, headers: Mapping[str, str]
+    ) -> None:
+        await self._emit_lifecycle(
+            "after_provider_response",
+            AfterProviderResponseEvent(status=status, headers=dict(headers)),
+        )
+
+    async def _cancelled_by_session_hook(self, event_name: str, event: object) -> bool:
+        for owner, handler in self._handlers_for(event_name):
+            try:
+                result = await _resolve(handler(event, self._fresh_context(owner.source_id)))
+            except Exception as exc:  # noqa: BLE001 - extensions are isolated
+                self._record_runtime_failure(owner.name, event_name, exc)
+                continue
+            if result is None:
+                continue
+            if not isinstance(result, SessionBeforeOperationResult):
+                self._record_bad_result(owner.name, event_name, result)
+                continue
+            if result.cancel:
+                return True
+        return False
+
     async def run_input_hooks(
         self,
         text: str,
@@ -1187,6 +1489,9 @@ class ExtensionRuntime:
 
     async def emit_event(self, event: object) -> None:
         """Dispatch one canonical agent or coding-session event to extensions."""
+        if isinstance(event, MessageEndEvent):
+            await self._emit_message_end(event)
+            return
         event_type = getattr(event, "type", None)
         if not isinstance(event_type, str):
             raise TypeError("Extension events must expose a string type")
@@ -1198,7 +1503,47 @@ class ExtensionRuntime:
             except Exception as exc:  # noqa: BLE001 - extensions are an isolation boundary
                 self._record_runtime_failure(owner.name, event_type, exc)
 
-    async def _on_agent_event(self, event: AgentEvent) -> None:
+    async def _emit_message_end(self, event: MessageEndEvent) -> None:
+        """Apply Pi's chained same-role replacement before other observers."""
+        current = event.message
+        for owner, handler in self._handlers_for("message_end"):
+            try:
+                result = await _resolve(
+                    handler(
+                        event.model_copy(update={"message": current}),
+                        self._fresh_context(owner.source_id),
+                    )
+                )
+            except Exception as exc:  # noqa: BLE001 - extensions are isolated
+                self._record_runtime_failure(owner.name, "message_end", exc)
+                continue
+            if result is None:
+                continue
+            if not isinstance(result, MessageEndHookResult):
+                self._record_bad_result(owner.name, "message_end", result)
+                continue
+            replacement = result.message
+            if replacement is None:
+                continue
+            if replacement.role != current.role:
+                self._record_runtime_failure(
+                    owner.name,
+                    "message_end",
+                    ValueError("message_end handlers must return a message with the same role"),
+                )
+                continue
+            current = replacement
+
+        if current is not event.message:
+            _replace_message_in_place(event.message, current)
+
+        for owner, handler in self._handlers_for(AGENT_EVENT_WILDCARD):
+            try:
+                await _resolve(handler(event, self._fresh_context(owner.source_id)))
+            except Exception as exc:  # noqa: BLE001 - extensions are isolated
+                self._record_runtime_failure(owner.name, "message_end", exc)
+
+    async def _on_agent_event(self, event: AgentEvent, _signal: object | None = None) -> None:
         """Adapt core turn events to Pi's extension-facing session metadata."""
         extension_event: object = event
         if isinstance(event, AgentStartEvent):
@@ -1289,6 +1634,16 @@ class ExtensionRuntime:
                 ),
             )
         )
+
+
+def _replace_message_in_place(target: AgentMessage, replacement: AgentMessage) -> None:
+    """Keep the core loop's message identity while applying an extension replacement."""
+    if target is replacement:
+        return
+    target.__dict__.clear()
+    target.__dict__.update(replacement.__dict__)
+    target.__pydantic_fields_set__.clear()
+    target.__pydantic_fields_set__.update(replacement.__pydantic_fields_set__)
 
 
 async def _resolve(value: object) -> object:

@@ -8,6 +8,7 @@ from os import environ
 from typing import Literal
 
 from tau_agent.types import JSONValue
+from tau_ai.provider import ProviderHooks
 
 DEFAULT_OPENAI_COMPATIBLE_BASE_URL = "https://api.openai.com/v1"
 DEFAULT_ANTHROPIC_BASE_URL = "https://api.anthropic.com/v1"
@@ -63,6 +64,7 @@ class OpenAICompatibleConfig:
     credential_resolver: RuntimeProviderAuthResolver | None = None
     response_headers_observer: RuntimeResponseHeadersObserver | None = None
     infer_api_from_model: bool = True
+    provider_hooks: ProviderHooks | None = field(default=None, repr=False, compare=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,6 +88,7 @@ class AnthropicConfig:
     cache_retention: CacheRetention = CACHE_RETENTION_SHORT
     cache_control_on_tools: bool = True
     credential_resolver: RuntimeProviderAuthResolver | None = None
+    provider_hooks: ProviderHooks | None = field(default=None, repr=False, compare=False)
 
 
 def openai_compatible_config_from_env(

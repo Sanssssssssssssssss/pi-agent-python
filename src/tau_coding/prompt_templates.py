@@ -44,7 +44,7 @@ def load_prompt_templates(paths: TauResourcePaths | None = None) -> list[PromptT
     templates_by_name: dict[str, PromptTemplate] = {}
     for prompts_dir in resource_paths.prompts_dirs:
         for template in _load_prompt_templates_from_dir(prompts_dir):
-            templates_by_name[template.name] = template
+            templates_by_name.setdefault(template.name, template)
     return sorted(templates_by_name.values(), key=lambda template: template.name)
 
 
@@ -68,9 +68,10 @@ def load_prompt_templates_with_diagnostics(
                         kind="prompt",
                         name=template.name,
                         path=template.path,
-                        message=f"overrides lower-precedence resource at {previous.path}",
+                        message=f"ignored because the first resource wins at {previous.path}",
                     )
                 )
+                continue
             templates_by_name[template.name] = template
     return sorted(templates_by_name.values(), key=lambda template: template.name), diagnostics
 
@@ -281,5 +282,10 @@ def _load_prompt_templates_from_dir_with_diagnostics(
 def _load_prompt_template(name: str, path: Path) -> PromptTemplate:
     raw = path.read_text(encoding="utf-8")
     metadata, content = parse_markdown_resource(raw)
-    description = metadata.get("description") or derive_description(content)
+    metadata_description = metadata.get("description")
+    description = (
+        metadata_description
+        if isinstance(metadata_description, str) and metadata_description
+        else derive_description(content)
+    )
     return PromptTemplate(name=name, path=path, content=content, description=description)

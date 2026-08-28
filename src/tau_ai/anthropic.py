@@ -36,6 +36,7 @@ from tau_ai.content import (
     NON_VISION_USER_IMAGE_PLACEHOLDER,
     messages_have_images,
     text_and_images,
+    transform_messages,
 )
 from tau_ai.env import (
     CACHE_RETENTION_LONG,
@@ -47,10 +48,15 @@ from tau_ai.env import (
 from tau_ai.events import AssistantMessageEvent
 from tau_ai.http import create_async_client
 from tau_ai.http_errors import provider_http_error_message
-from tau_ai.provider import CancellationToken
+from tau_ai.provider import (
+    CancellationToken,
+    apply_provider_headers,
+    apply_provider_payload,
+    emit_provider_response,
+)
 from tau_ai.retry import provider_retry_event, retry_delay_seconds, wait_for_retry
 from tau_ai.stream import canonicalize_provider_stream
-from tau_ai.tool_call_ids import portable_tool_call_id
+from tau_ai.tool_call_ids import normalize_portable_tool_call_id, portable_tool_call_id
 
 ANTHROPIC_VERSION = "2023-06-01"
 DEFAULT_MAX_TOKENS = 4096
@@ -146,6 +152,9 @@ class AnthropicProvider:
                 cache_retention=self._config.cache_retention,
                 cache_control_on_tools=self._config.cache_control_on_tools,
             )
+            request_payload = await apply_provider_payload(
+                self._config.provider_hooks, payload
+            )
             headers = {
                 "anthropic-version": ANTHROPIC_VERSION,
                 "content-type": "application/json",
@@ -162,6 +171,7 @@ class AnthropicProvider:
                 headers.setdefault("Authorization", f"Bearer {api_key}")
             else:
                 headers["x-api-key"] = api_key
+            headers = await apply_provider_headers(self._config.provider_hooks, headers)
             url = f"{base_url.rstrip('/')}/messages"
 
             attempt = 0
@@ -169,8 +179,13 @@ class AnthropicProvider:
                 emitted_content = False
                 try:
                     async with client.stream(
-                        "POST", url, json=payload, headers=headers
+                        "POST", url, json=request_payload, headers=headers
                     ) as response:
+                        await emit_provider_response(
+                            self._config.provider_hooks,
+                            response.status_code,
+                            response.headers,
+                        )
                         if response.status_code >= 400:
                             body = await response.aread()
                             body_text = body.decode(errors="replace")
@@ -437,6 +452,14 @@ def _build_messages_payload(
     cache_retention: CacheRetention = CACHE_RETENTION_SHORT,
     cache_control_on_tools: bool = True,
 ) -> dict[str, JSONValue]:
+    messages = transform_messages(
+        messages,
+        model=model,
+        provider="anthropic",
+        api="anthropic-messages",
+        supports_images=supports_images,
+        normalize_tool_call_id=normalize_portable_tool_call_id,
+    )
     resolved_max_tokens = max_tokens or DEFAULT_MAX_TOKENS
     if thinking_budget_tokens is not None:
         resolved_max_tokens = max(resolved_max_tokens, thinking_budget_tokens + 1024)

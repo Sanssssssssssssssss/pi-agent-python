@@ -3,19 +3,31 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import string
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Literal
+from uuid import uuid4
 
 from tau_agent.events import AgentEndEvent, AgentEvent, MessageEndEvent, ToolExecutionEndEvent
 from tau_agent.harness import AgentHarness, AgentHarnessConfig, QueuedMessages
+from tau_agent.loop import AgentContext, AgentLoopTurnUpdate, TurnContext
 from tau_agent.messages import (
     AgentMessage,
     AssistantMessage,
+    BashExecutionMessage,
+    BranchSummaryMessage,
+    CompactionSummaryMessage,
     CustomMessage,
+    ImageContent,
+    TextContent,
+    ThinkingContent,
+    ToolResultMessage,
+    Usage,
+    UsageCost,
     UserMessage,
     message_text,
 )
@@ -27,7 +39,6 @@ from tau_agent.session import (
     CustomEntry,
     JsonlSessionStorage,
     LabelEntry,
-    LeafEntry,
     MessageEntry,
     ModelChangeEntry,
     SessionInfoEntry,
@@ -42,7 +53,15 @@ from tau_agent.tool_history import ToolHistoryRepair, repair_tool_history
 from tau_agent.tools import AgentTool
 from tau_agent.types import JSONValue
 from tau_ai.model_limits import ModelLimitsProvider, RuntimeModelLimits
-from tau_coding.branch_summary import summarize_branch_messages_with_model
+from tau_ai.provider import ProviderHooks
+from tau_ai.retry import is_retryable_assistant_error
+from tau_coding.branch_summary import (
+    BRANCH_SUMMARY_SYSTEM_PROMPT,
+    add_branch_summary_context,
+    append_file_operations,
+    build_branch_summary_prompt,
+    file_operations_from_messages,
+)
 from tau_coding.commands import CommandRegistry, CommandResult, create_default_command_registry
 from tau_coding.context import discover_project_context_with_diagnostics
 from tau_coding.context_window import (
@@ -52,9 +71,8 @@ from tau_coding.context_window import (
     ContextUsageEstimate,
     auto_compaction_threshold_for_context_window,
     build_compaction_summary_prompt,
+    build_turn_prefix_summary_prompt,
     estimate_context_usage,
-    estimate_message_tokens,
-    summarize_messages_for_compaction,
 )
 from tau_coding.credentials import FileCredentialStore, credentials_path
 from tau_coding.diagnostics import (
@@ -73,6 +91,12 @@ from tau_coding.events import (
     SessionAgentEndEvent,
     SessionInfoChangedEvent,
     ThinkingLevelChangedEvent,
+)
+from tau_coding.extensions.api import (
+    SessionBeforeCompactEvent,
+    SessionBeforeTreeEvent,
+    SessionCompactEvent,
+    SessionTreeEvent,
 )
 from tau_coding.extensions.provider_registry import DynamicProviderRegistry
 from tau_coding.extensions.providers import DynamicProvider, ProviderModel
@@ -102,6 +126,7 @@ from tau_coding.provider_config import (
     load_provider_settings,
     provider_default_thinking_level,
     provider_has_usable_credentials,
+    provider_model_max_tokens,
     provider_model_supports_images,
     provider_thinking_levels,
     provider_thinking_unavailable_reason,
@@ -126,6 +151,7 @@ from tau_coding.resources import (
     TauResourcePaths,
     discover_system_prompt_resources,
     resource_paths_with_cwd,
+    resource_paths_with_extensions,
     resource_paths_with_project_trust,
 )
 from tau_coding.session_export import (
@@ -282,7 +308,13 @@ class CompactionPlan:
     """Prepared active-context entries for a compaction run."""
 
     replace_entry_ids: tuple[str, ...]
+    first_kept_entry_id: str
     messages_to_summarize: tuple[AgentMessage, ...]
+    turn_prefix_messages: tuple[AgentMessage, ...] = ()
+    previous_summary: str | None = None
+    tokens_before: int = 0
+    read_files: tuple[str, ...] = ()
+    modified_files: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -294,15 +326,67 @@ class ManualCompactionResult:
     tokens_before: int
     estimated_tokens_after: int
     replaced_entry_count: int
+    usage: Usage | None = None
+    details: dict[str, JSONValue] | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _SummaryResult:
+    text: str
+    usage: Usage
+    details: dict[str, JSONValue]
+
+
+@dataclass(frozen=True, slots=True)
+class _EventCancellationToken:
+    event: asyncio.Event
+
+    def is_cancelled(self) -> bool:
+        return self.event.is_set()
+
+
+def _combine_usage(first: Usage, second: Usage) -> Usage:
+    reasoning = (
+        None
+        if first.reasoning is None and second.reasoning is None
+        else (first.reasoning or 0) + (second.reasoning or 0)
+    )
+    cache_write_1h = (
+        None
+        if first.cache_write_1h is None and second.cache_write_1h is None
+        else (first.cache_write_1h or 0) + (second.cache_write_1h or 0)
+    )
+    return Usage(
+        input=first.input + second.input,
+        output=first.output + second.output,
+        cache_read=first.cache_read + second.cache_read,
+        cache_write=first.cache_write + second.cache_write,
+        cache_write_1h=cache_write_1h,
+        reasoning=reasoning,
+        total_tokens=first.total_tokens + second.total_tokens,
+        cost=UsageCost(
+            input=first.cost.input + second.cost.input,
+            output=first.cost.output + second.cost.output,
+            cache_read=first.cost.cache_read + second.cost.cache_read,
+            cache_write=first.cost.cache_write + second.cost.cache_write,
+            total=first.cost.total + second.cost.total,
+        ),
+    )
+
+
+def _merge_string_lists(current: Sequence[str], stored: JSONValue) -> list[str]:
+    values = set(current)
+    if isinstance(stored, list):
+        values.update(item for item in stored if isinstance(item, str))
+    return sorted(values)
 
 
 @dataclass(frozen=True, slots=True)
 class _PendingMessageWrite:
-    """Stable entries retained while a message persistence attempt is retried."""
+    """Stable entry retained while a message persistence attempt is retried."""
 
     message: AgentMessage
     message_entry: MessageEntry
-    leaf_entry: LeafEntry
 
 
 @dataclass(frozen=True, slots=True)
@@ -318,6 +402,7 @@ class CodingSessionConfig:
     append_system_prompt: str | None = None
     context_files: tuple[ProjectContextFile, ...] = ()
     tools: list[AgentTool] | None = None
+    max_turns: int | None = None
     resource_paths: TauResourcePaths | None = None
     session_id: str | None = None
     session_manager: SessionManager | None = None
@@ -334,6 +419,9 @@ class CodingSessionConfig:
     owns_initial_provider: bool = False
     auto_compact_token_threshold: int | None = None
     auto_compact_enabled: bool = True
+    retry_enabled: bool = True
+    retry_max_retries: int = 3
+    retry_base_delay_ms: int = 2000
     thinking_level: ThinkingLevel = DEFAULT_THINKING_LEVEL
     thinking_level_override: ThinkingLevel | None = None
     """One-shot startup override (e.g. ``--thinking``) for the session's level.
@@ -451,6 +539,12 @@ class CodingSession:
         self._persisted_message_ids: set[int] = set()
         self._ended_message_ids: set[int] = set()
         self._pending_message_writes: dict[int, _PendingMessageWrite] = {}
+        self._retry_attempt = 0
+        self._retry_waiting = False
+        self._retry_cancel_event = asyncio.Event()
+        self._system_prompt_override: str | None = None
+        if isinstance(self._harness, AgentHarness):
+            self._harness.config.prepare_next_turn = self._prepare_next_turn_refresh
         self._attach_persistence_listener()
 
     @classmethod
@@ -475,13 +569,7 @@ class CodingSession:
         else:
             entries = _detach_missing_parents(entries)
 
-        linear_state = SessionState.from_entries(entries)
-        latest_leaf = _latest_leaf_entry(entries)
-        state = (
-            SessionState.from_entries(entries, leaf_id=latest_leaf.entry_id)
-            if latest_leaf is not None
-            else linear_state
-        )
+        state = SessionState.from_entries(entries)
         unfiltered_resource_paths = resource_paths_with_cwd(config.resource_paths, config.cwd)
 
         # A runtime is cwd-bound because it may contain project registrations.
@@ -645,7 +733,11 @@ class CodingSession:
                 model=active_model,
                 system=system,
                 tools=tools,
+                max_turns=config.max_turns,
                 session_id=config.session_id,
+                before_tool_call=extension_runtime.before_tool_call,
+                after_tool_call=extension_runtime.after_tool_call,
+                transform_context=extension_runtime.transform_context,
             ),
             messages=state.messages,
         )
@@ -686,6 +778,7 @@ class CodingSession:
             # Tool-history repair above updates the active harness before extension
             # listeners attach.
             extension_runtime.attach_harness_listener(session._harness.subscribe)
+            session._attach_persistence_listener()
             # session_start is deferred: hosts emit it via emit_pending_session_start()
             # after installing their UI bridge.
             session._session_start_pending = True
@@ -885,7 +978,7 @@ class CodingSession:
         replace_instructions: bool = False,
     ) -> SessionTreeBranchResult:
         """Move the active leaf to a previous entry, preserving existing history."""
-        if self._harness.is_running:
+        if self.is_running:
             raise RuntimeError(TREE_RUNNING_MESSAGE)
         await self._flush_pending_message_writes(context=self._diagnostic_context())
         entries = await self._read_session_entries()
@@ -896,34 +989,61 @@ class CodingSession:
         if not _is_branchable_tree_entry(selected_entry):
             raise ValueError(f"Session entry cannot be branched from: {entry_id}")
 
+        old_leaf_id = self._state.active_leaf_id or self._last_parent_id
+        abandoned_messages = _messages_after_entry_on_active_path(
+            entries,
+            entry_id,
+            self._last_parent_id,
+        )
+        tree_hook = await self._extension_runtime.before_session_tree(
+            SessionBeforeTreeEvent(
+                target_id=entry_id,
+                old_leaf_id=old_leaf_id,
+                entries_to_summarize=abandoned_messages,
+                user_wants_summary=summarize,
+                custom_instructions=custom_instructions,
+                replace_instructions=replace_instructions,
+            )
+        )
+        if tree_hook.cancel:
+            return SessionTreeBranchResult(message="Tree navigation cancelled by extension.")
+        if tree_hook.custom_instructions is not None:
+            custom_instructions = tree_hook.custom_instructions
+        if tree_hook.replace_instructions is not None:
+            replace_instructions = tree_hook.replace_instructions
+
         target_id: str | None = entry_id
         input_prefill: str | None = None
+        if selected_entry.type == "message" and isinstance(selected_entry.message, UserMessage):
+            target_id = selected_entry.parent_id
+            input_prefill = selected_entry.message.text
+
         summary_entry: BranchSummaryEntry | None = None
-        if summarize:
-            abandoned_messages = _messages_after_entry_on_active_path(
-                entries,
-                entry_id,
-                self._last_parent_id,
-            )
-            if abandoned_messages:
-                summary = await self._summarize_branch_messages(
+        from_extension = False
+        if summarize and abandoned_messages:
+            if tree_hook.summary is not None:
+                summary_result = _SummaryResult(
+                    text=tree_hook.summary,
+                    usage=Usage(),
+                    details={},
+                )
+                from_extension = True
+            else:
+                summary_result = await self._summarize_branch_messages(
                     abandoned_messages,
                     custom_instructions=custom_instructions,
                     replace_instructions=replace_instructions,
                 )
-                summary_entry = BranchSummaryEntry(
-                    parent_id=entry_id,
-                    branch_root_id=entry_id,
-                    summary=summary,
-                )
-                await self._append_session_entry(summary_entry)
-                target_id = summary_entry.id
-        elif selected_entry.type == "message" and isinstance(selected_entry.message, UserMessage):
-            target_id = selected_entry.parent_id
-            input_prefill = selected_entry.message.text
-
-        leaf = LeafEntry(parent_id=target_id, entry_id=target_id)
-        await self._append_session_entry(leaf)
+            summary_entry = BranchSummaryEntry(
+                parent_id=target_id,
+                branch_root_id=target_id,
+                summary=summary_result.text,
+                details=summary_result.details,
+                usage=summary_result.usage,
+                from_extension=from_extension,
+            )
+            await self._append_session_entry(summary_entry)
+            target_id = summary_entry.id
         self._last_parent_id = target_id
 
         await self._refresh_persisted_state(leaf_id=target_id)
@@ -931,12 +1051,14 @@ class CodingSession:
         if history_repair is None:
             self._harness.replace_messages(self._state.messages)
         self._invalidate_context_usage_cache()
-        self._thinking_level = _state_thinking_level(
-            self._state,
-            default=_default_thinking_level_for_active_model(self),
+        await self._extension_runtime.emit_session_tree(
+            SessionTreeEvent(
+                new_leaf_id=target_id,
+                old_leaf_id=old_leaf_id,
+                summary_entry=summary_entry,
+                from_extension=from_extension,
+            )
         )
-        self._sync_thinking_level_to_active_model()
-        self._refresh_runtime_provider()
         suffix = " with branch summary" if summary_entry is not None else ""
         if history_repair is not None:
             suffix += " and repaired malformed tool history"
@@ -1198,8 +1320,61 @@ class CodingSession:
         if not self._session_start_pending:
             return
         await self._extension_runtime.emit_session_start("startup")
+        await self._extend_resources_from_extensions("startup")
         self._commit_project_trust_resolution()
         self._session_start_pending = False
+
+    async def _extend_resources_from_extensions(
+        self, reason: Literal["startup", "reload"]
+    ) -> None:
+        skill_paths, prompt_paths, theme_paths = (
+            await self._extension_runtime.emit_resources_discover(reason)
+        )
+        if not (skill_paths or prompt_paths or theme_paths):
+            return
+        paths = resource_paths_with_extensions(
+            self._resource_paths,
+            skill_paths=skill_paths,
+            prompt_paths=prompt_paths,
+            theme_paths=theme_paths,
+        )
+        resources = _load_session_resources(
+            paths,
+            self._config.context_files,
+            skills_enabled=self._config.skills_enabled,
+            system_prompt_enabled=self._config.system is None,
+            custom_system_prompt_explicit=self._config.custom_system_prompt is not None,
+        )
+        self._resource_paths = paths
+        self._skills = resources.skills
+        self._prompt_templates = resources.prompt_templates
+        self._context_files = resources.context_files
+        self._custom_system_prompt = resources.custom_system_prompt
+        self._custom_system_prompt_path = resources.custom_system_prompt_path
+        self._append_system_prompt = resources.append_system_prompt
+        self._append_system_prompt_paths = resources.append_system_prompt_paths
+        self._resource_diagnostics = resources.diagnostics
+        if self._config.system is None:
+            self._harness.config.system = build_system_prompt(
+                BuildSystemPromptOptions(
+                    cwd=self.cwd,
+                    tools=self._harness.config.tools,
+                    skills=self._skills,
+                    custom_prompt=(
+                        self._config.custom_system_prompt
+                        if self._config.custom_system_prompt is not None
+                        else self._custom_system_prompt
+                    ),
+                    append_system_prompt=_compose_append_system_prompt(
+                        self._append_system_prompt,
+                        self._config.append_system_prompt,
+                    ),
+                    context_files=self._context_files,
+                    extra_guidelines=self._extension_runtime.prompt_guidelines,
+                    extra_sections=self._extension_runtime.prompt_sections,
+                )
+            )
+            self._invalidate_context_usage_cache()
 
     def _commit_project_trust_resolution(self) -> None:
         """Publish staged trust only after the session becomes live."""
@@ -1251,8 +1426,6 @@ class CodingSession:
         entry = CustomEntry(parent_id=self._last_parent_id, namespace=namespace, data=data)
         await self._append_session_entry(entry)
         self._last_parent_id = entry.id
-        leaf = LeafEntry(parent_id=entry.id, entry_id=entry.id)
-        await self._append_session_entry(leaf)
         await self._refresh_persisted_state(leaf_id=entry.id)
 
     @property
@@ -1283,11 +1456,21 @@ class CodingSession:
     @property
     def is_running(self) -> bool:
         """Return whether this session currently has an active agent run."""
-        return self._harness.is_running
+        return self._harness.is_running or self._retry_attempt > 0
+
+    @property
+    def is_retrying(self) -> bool:
+        """Return whether Pi's abortable retry backoff is active."""
+        return self._retry_waiting
+
+    @property
+    def retry_attempt(self) -> int:
+        """Return the current retry attempt, or zero while idle."""
+        return self._retry_attempt
 
     def _require_idle(self, operation: str) -> None:
         """Reject replacement-like operations until an active turn is drained."""
-        if self._harness.is_running:
+        if self.is_running:
             raise RuntimeError(
                 f"Cannot {operation} while Tau is working. "
                 "Press Escape to interrupt and wait for it to finish."
@@ -1328,6 +1511,7 @@ class CodingSession:
 
     def cancel(self) -> None:
         """Cancel the currently running agent turn, if any."""
+        self._retry_cancel_event.set()
         self._harness.cancel()
 
     def queue_update_event(self) -> QueueUpdateEvent:
@@ -1392,8 +1576,7 @@ class CodingSession:
             model=model,
             provider=self.provider_name,
         )
-        leaf = LeafEntry(parent_id=entry.id, entry_id=entry.id)
-        await self._append_session_batch((entry, leaf))
+        await self._append_session_entry(entry)
         self._last_parent_id = entry.id
         await self._refresh_persisted_state(leaf_id=entry.id)
 
@@ -1401,9 +1584,9 @@ class CodingSession:
         """Switch provider/model with candidate-first durable publication.
 
         No active state changes until the candidate runtime exists and the
-        provider-aware model entry plus leaf are committed as one batch.
+        provider-aware model entry is committed before publication.
         """
-        if self._harness.is_running:
+        if self.is_running:
             raise RuntimeError(
                 "Tau is still working. Press Escape to interrupt before switching models."
             )
@@ -1433,6 +1616,7 @@ class CodingSession:
                     selected_dynamic,
                     model=choice.model,
                     credential_store=self._credential_store,
+                    provider_hooks=self._extension_runtime.provider_hooks,
                 )
                 if (
                     selected_model.thinking_levels is not None
@@ -1473,6 +1657,7 @@ class CodingSession:
                         if selected_config.name == "huggingface"
                         else None
                     ),
+                    provider_hooks=self._extension_runtime.provider_hooks,
                 )
                 selected_image_support = provider_model_supports_images(
                     selected_config, choice.model
@@ -1483,8 +1668,7 @@ class CodingSession:
                 model=choice.model,
                 provider=choice.provider_name,
             )
-            leaf = LeafEntry(parent_id=entry.id, entry_id=entry.id)
-            await self._append_session_batch((entry, leaf))
+            await self._append_session_entry(entry)
         except BaseException:
             if candidate is not None:
                 await candidate.aclose()
@@ -1670,6 +1854,7 @@ class CodingSession:
                     if provider_config.name == "huggingface"
                     else None
                 ),
+                provider_hooks=self._extension_runtime.provider_hooks,
             )
         except RuntimeError as exc:
             raise ProviderConfigError(str(exc)) from exc
@@ -1723,8 +1908,6 @@ class CodingSession:
             thinking_level=normalized,
         )
         await self._append_session_entry(entry)
-        leaf = LeafEntry(parent_id=entry.id, entry_id=entry.id)
-        await self._append_session_entry(leaf)
         self._last_parent_id = entry.id
 
         self._persist_thinking_level_choice()
@@ -1875,8 +2058,21 @@ class CodingSession:
 
     def will_auto_retry(self, message: AssistantMessage) -> bool:
         """Return whether session orchestration will retry this assistant error."""
-        return is_context_overflow_error(message) or self._should_auto_failover_huggingface_route(
-            message
+        return (
+            self._is_recoverable_overflow(message)
+            or self._should_auto_failover_huggingface_route(message)
+            or (
+                self._config.retry_enabled
+                and self._config.retry_max_retries > 0
+                and self._is_transient_retryable(message)
+            )
+        )
+
+    def _is_transient_retryable(self, message: AssistantMessage) -> bool:
+        return (
+            not is_context_overflow_error(message)
+            and not self._should_auto_failover_huggingface_route(message)
+            and is_retryable_assistant_error(message)
         )
 
     def _should_auto_failover_huggingface_route(
@@ -1930,6 +2126,7 @@ class CodingSession:
         await self._extension_runtime.emit_event(retry_start)
         yield retry_start
 
+        self._drop_retriable_assistant_tail()
         retry_events = self._harness.continue_()
         self._invalidate_context_usage_cache()
         final_error: str | None = None
@@ -1980,6 +2177,244 @@ class CodingSession:
         await self._extension_runtime.emit_event(retry_end)
         yield retry_end
 
+    async def _run_overflow_recovery(
+        self,
+        failure: AssistantMessage,
+        *,
+        context: AgentCallDiagnosticContext,
+    ) -> AsyncIterator[CodingSessionEvent]:
+        """Run Pi's single compact-and-continue recovery for a recoverable overflow."""
+        self._drop_retriable_assistant_tail()
+        compaction_start = CompactionStartEvent(reason="overflow")
+        await self._extension_runtime.emit_event(compaction_start)
+        yield compaction_start
+
+        compaction_result = await self._try_overflow_compact(context=context)
+        compacted = compaction_result is not None
+        compaction_end = CompactionEndEvent(
+            reason="overflow",
+            result=compaction_result,
+            aborted=not compacted,
+            will_retry=compacted,
+            error_message=None if compacted else "Overflow compaction failed",
+        )
+        await self._extension_runtime.emit_event(compaction_end)
+        yield compaction_end
+        if not compacted:
+            return
+
+        # Pi keeps the failed assistant message in the append-only session, but
+        # removes it from the live agent state before the retry. Rebuilding the
+        # session during compaction restores that durable entry, so reapply the
+        # same live-state boundary before continuing.
+        self._drop_retriable_assistant_tail()
+
+        retry_start = AutoRetryStartEvent(
+            attempt=1,
+            max_attempts=1,
+            delay_ms=0,
+            error_message=failure.error_message or "Context overflow",
+        )
+        await self._extension_runtime.emit_event(retry_start)
+        yield retry_start
+
+        events = self._harness.continue_()
+        self._invalidate_context_usage_cache()
+        final_error: str | None = None
+        try:
+            async for event in events:
+                if isinstance(event, ToolExecutionEndEvent):
+                    self._invalidate_context_usage_cache()
+                if isinstance(event, MessageEndEvent) and isinstance(
+                    event.message, AssistantMessage
+                ):
+                    message = event.message
+                    if self._is_recoverable_overflow(message):
+                        final_error = (
+                            "Context overflow recovery failed after one compact-and-retry attempt"
+                        )
+                    elif message.stop_reason in {"error", "aborted"}:
+                        final_error = message.error_message or "Provider request aborted"
+                    if message.stop_reason == "error":
+                        self._last_diagnostic_log_path = (
+                            self._diagnostic_logger.log_assistant_error(
+                                context=context,
+                                phase="agent_loop_retry",
+                                message=message,
+                            )
+                        )
+                if isinstance(event, AgentEndEvent):
+                    yield SessionAgentEndEvent(messages=event.messages, will_retry=False)
+                else:
+                    yield event
+        finally:
+            aclose = getattr(events, "aclose", None)
+            if aclose is not None:
+                with suppress(Exception):
+                    await aclose()
+
+        retry_end = AutoRetryEndEvent(
+            success=final_error is None,
+            attempt=1,
+            final_error=final_error,
+        )
+        await self._extension_runtime.emit_event(retry_end)
+        yield retry_end
+
+    async def _run_transient_retries(
+        self,
+        failure: AssistantMessage,
+        *,
+        context: AgentCallDiagnosticContext,
+    ) -> AsyncIterator[CodingSessionEvent]:
+        """Translate Pi's bounded agent-level retry loop."""
+        attempt = 0
+        try:
+            while self._config.retry_enabled and self._is_transient_retryable(failure):
+                if attempt >= self._config.retry_max_retries:
+                    retry_end = AutoRetryEndEvent(
+                        success=False,
+                        attempt=attempt,
+                        final_error=failure.error_message,
+                    )
+                    await self._extension_runtime.emit_event(retry_end)
+                    yield retry_end
+                    return
+
+                attempt += 1
+                self._retry_attempt = attempt
+                delay_ms = self._config.retry_base_delay_ms * (2 ** (attempt - 1))
+                retry_start = AutoRetryStartEvent(
+                    attempt=attempt,
+                    max_attempts=self._config.retry_max_retries,
+                    delay_ms=delay_ms,
+                    error_message=failure.error_message or "Unknown error",
+                )
+                await self._extension_runtime.emit_event(retry_start)
+                yield retry_start
+                self._drop_retriable_assistant_tail()
+
+                self._retry_waiting = True
+                try:
+                    retry_cancelled = await self._retry_delay_cancelled(delay_ms)
+                finally:
+                    self._retry_waiting = False
+                if retry_cancelled:
+                    retry_end = AutoRetryEndEvent(
+                        success=False,
+                        attempt=attempt,
+                        final_error="Retry cancelled",
+                    )
+                    await self._extension_runtime.emit_event(retry_end)
+                    yield retry_end
+                    return
+
+                retry_events = self._harness.continue_()
+                self._invalidate_context_usage_cache()
+                latest_failure: AssistantMessage | None = None
+                overflow_failure: AssistantMessage | None = None
+                retry_active = True
+                try:
+                    async for retry_event in retry_events:
+                        if isinstance(retry_event, ToolExecutionEndEvent):
+                            self._invalidate_context_usage_cache()
+                        if isinstance(retry_event, MessageEndEvent) and isinstance(
+                            retry_event.message, AssistantMessage
+                        ):
+                            message = retry_event.message
+                            overflow_failure = (
+                                message
+                                if self._is_recoverable_overflow(message)
+                                else None
+                            )
+                            latest_failure = (
+                                message if message.stop_reason in {"error", "aborted"} else None
+                            )
+                            if message.stop_reason == "error":
+                                self._last_diagnostic_log_path = (
+                                    self._diagnostic_logger.log_assistant_error(
+                                        context=context,
+                                        phase="agent_loop_retry",
+                                        message=message,
+                                    )
+                                )
+                            elif retry_active and overflow_failure is None:
+                                retry_end = AutoRetryEndEvent(
+                                    success=True,
+                                    attempt=attempt,
+                                    final_error=None,
+                                )
+                                await self._extension_runtime.emit_event(retry_end)
+                                yield retry_event
+                                yield retry_end
+                                retry_active = False
+                                attempt = 0
+                                self._retry_attempt = 0
+                                continue
+                        if isinstance(retry_event, AgentEndEvent):
+                            yield SessionAgentEndEvent(
+                                messages=retry_event.messages,
+                                will_retry=(
+                                    latest_failure is not None
+                                    and self._config.retry_enabled
+                                    and self._is_transient_retryable(latest_failure)
+                                    and attempt < self._config.retry_max_retries
+                                ),
+                            )
+                        else:
+                            yield retry_event
+                finally:
+                    aclose = getattr(retry_events, "aclose", None)
+                    if aclose is not None:
+                        with suppress(Exception):
+                            await aclose()
+
+                if overflow_failure is not None:
+                    if retry_active:
+                        retry_end = AutoRetryEndEvent(
+                            success=True,
+                            attempt=attempt,
+                            final_error=None,
+                        )
+                        await self._extension_runtime.emit_event(retry_end)
+                        yield retry_end
+                    async for recovery_event in self._run_overflow_recovery(
+                        overflow_failure,
+                        context=context,
+                    ):
+                        yield recovery_event
+                    return
+
+                if latest_failure is None:
+                    return
+                if not self._is_transient_retryable(latest_failure):
+                    if retry_active:
+                        retry_end = AutoRetryEndEvent(
+                            success=False,
+                            attempt=attempt,
+                            final_error=latest_failure.error_message,
+                        )
+                        await self._extension_runtime.emit_event(retry_end)
+                        yield retry_end
+                    return
+                if not retry_active:
+                    attempt = 0
+                failure = latest_failure
+        finally:
+            self._retry_attempt = 0
+            self._retry_waiting = False
+
+    async def _retry_delay_cancelled(self, delay_ms: int) -> bool:
+        if self._retry_cancel_event.is_set():
+            return True
+        if delay_ms <= 0:
+            return None
+        try:
+            await asyncio.wait_for(self._retry_cancel_event.wait(), timeout=delay_ms / 1000)
+        except TimeoutError:
+            return False
+        return True
+
     def _build_runtime_provider(
         self,
         *,
@@ -2001,6 +2436,7 @@ class CodingSession:
                     if provider_config.name == "huggingface"
                     else None
                 ),
+                provider_hooks=self._extension_runtime.provider_hooks,
             )
         except RuntimeError as exc:
             raise ProviderConfigError(str(exc)) from exc
@@ -2198,6 +2634,7 @@ class CodingSession:
         # staged runtime may inspect the still-live session during session_start;
         # cancellation leaves that prior snapshot/runtime/cache untouched.
         old_runtime = self._extension_runtime
+        old_provider_hooks = old_runtime.provider_hooks is not None
         await old_runtime.emit_session_shutdown("reload")
         old_runtime.clear_ui_components()
         staged_runtime.set_ui_bridge(previous_ui)
@@ -2231,9 +2668,32 @@ class CodingSession:
         self._provider_registry = staged_runtime.provider_registry
         self._harness.config.tools = staged_tools
         self._harness.config.system = staged_system
+        self._harness.config.before_tool_call = staged_runtime.before_tool_call
+        self._harness.config.after_tool_call = staged_runtime.after_tool_call
+        self._harness.config.transform_context = staged_runtime.transform_context
+        if self._runtime_provider_config is not None:
+            self._refresh_runtime_provider()
+        elif (
+            self._config.dynamic_provider is not None
+            and (old_provider_hooks or staged_runtime.provider_hooks is not None)
+        ):
+            effective = self._provider_registry.effective(self.provider_name)
+            if effective is not None and isinstance(effective.definition, DynamicProvider):
+                provider = await create_dynamic_model_provider(
+                    effective.definition,
+                    model=self.model,
+                    credential_store=self._credential_store,
+                    environment=self._extension_runtime.provider_environment,
+                    provider_hooks=staged_runtime.provider_hooks,
+                )
+                self._owned_providers.append(provider)
+                self._harness.config.provider = provider
+                self._config = replace(self._config, dynamic_provider=effective.definition)
         if system_prompt_rebuilt:
             self._invalidate_context_usage_cache()
         staged_runtime.attach_harness_listener(self._harness.subscribe)
+        self._attach_persistence_listener()
+        await self._extend_resources_from_extensions("reload")
         # Retirement invalidates publication synchronously; async close then
         # waits for cooperative provider callback cleanup or reports bounded
         # containment while the outgoing runtime still owns every task handle.
@@ -2242,12 +2702,12 @@ class CodingSession:
         await _finish_adopted_runtime_close(old_runtime)
 
         return CodingReloadSummary(
-            skills=_category_summary(before_skills, _skill_signatures(resources.skills)),
+            skills=_category_summary(before_skills, _skill_signatures(self._skills)),
             prompt_templates=_category_summary(
-                before_prompt_templates, _prompt_template_signatures(resources.prompt_templates)
+                before_prompt_templates, _prompt_template_signatures(self._prompt_templates)
             ),
             context_files=_category_summary(
-                before_context_files, _context_file_signatures(resources.context_files)
+                before_context_files, _context_file_signatures(self._context_files)
             ),
             extensions=_category_summary(before_extensions, _extension_signatures(staged_runtime)),
             diagnostics=_category_summary(
@@ -2291,6 +2751,8 @@ class CodingSession:
         record = manager.get_session(session_id)
         if record is None:
             raise ValueError(f"Unknown session: {session_id}")
+        if await self._extension_runtime.before_session_switch("resume", record.path):
+            return "Session switch cancelled by extension."
 
         provider_name = self._provider_name
         runtime_provider_config = self._runtime_provider_config
@@ -2441,6 +2903,8 @@ class CodingSession:
         manager = self._config.session_manager
         if manager is None:
             raise ValueError("Session manager is not available")
+        if await self._extension_runtime.before_session_switch("new"):
+            return "New session cancelled by extension."
 
         provider_name = self._provider_name
         model = self.model
@@ -2537,6 +3001,10 @@ class CodingSession:
         """
         old_runtime = self._extension_runtime
         try:
+            if reason == "branch" and await old_runtime.before_session_fork(
+                replacement._state.active_leaf_id or "", "at"
+            ):
+                raise ValueError("Session fork cancelled by extension")
             if (
                 replacement.project_trust_resolution is not None
                 and replacement.project_trust_resolution.cancelled
@@ -2553,6 +3021,7 @@ class CodingSession:
             await old_runtime.emit_session_shutdown(reason)
             old_runtime.clear_ui_components()
             await replacement._extension_runtime.emit_session_start(reason)
+            await replacement._extend_resources_from_extensions("startup")
             replacement._commit_project_trust_resolution()
             replacement._session_start_pending = False
         except BaseException:
@@ -2570,7 +3039,6 @@ class CodingSession:
         if replacement._persistence_unsubscribe is not None:
             replacement._persistence_unsubscribe()
             replacement._persistence_unsubscribe = None
-        self._attach_persistence_listener()
         self._invalidate_context_usage_cache()
         self._last_parent_id = replacement._last_parent_id
         self._skills = replacement._skills
@@ -2607,8 +3075,11 @@ class CodingSession:
         self._project_trust_resolution = replacement._project_trust_resolution
         self._project_trust_commit_pending = False
         self._session_start_pending = False
+        self._system_prompt_override = replacement._system_prompt_override
+        self._harness.config.prepare_next_turn = self._prepare_next_turn_refresh
         self._extension_runtime.bind(self)
         self._extension_runtime.attach_harness_listener(self._harness.subscribe)
+        self._attach_persistence_listener()
         # Adoption is already committed. Finish outgoing cleanup under a
         # shielded owner and contain cancellation rather than reporting that
         # the requested destination failed to replace the source session.
@@ -2617,44 +3088,65 @@ class CodingSession:
     async def compact_detailed(self, instructions: str | None = None) -> ManualCompactionResult:
         """Compact older context while preserving a real recent-entry boundary."""
         await self._flush_pending_message_writes(context=self._diagnostic_context())
-        rows = self._active_context_rows()
         plan = self._recent_preserving_compaction_plan()
         if plan is None:
-            raise ValueError("Not enough context to compact while preserving recent entries")
-        first_kept_entry_id = rows[len(plan.replace_entry_ids)][0]
-        tokens_before = self.context_token_estimate
-        summary = await self._generate_compaction_summary(
-            plan.messages_to_summarize,
-            custom_instructions=instructions,
+            raise ValueError("Nothing to compact (session too small)")
+        hook = await self._extension_runtime.before_session_compact(
+            SessionBeforeCompactEvent(
+                preparation=plan,
+                branch_entries=await self._read_session_entries(),
+                custom_instructions=instructions,
+                reason="manual",
+                will_retry=False,
+            )
+        )
+        if hook.cancel:
+            raise ValueError("Compaction cancelled by extension")
+        from_extension = hook.summary is not None
+        summary_result = (
+            _SummaryResult(text=hook.summary, usage=Usage(), details={})
+            if hook.summary is not None
+            else await self._generate_compaction_plan_summary(
+                plan,
+                custom_instructions=instructions,
+            )
         )
         compaction = await self._append_compaction(
-            summary,
+            summary_result.text,
             replace_entry_ids=plan.replace_entry_ids,
-            first_kept_entry_id=first_kept_entry_id,
-            tokens_before=tokens_before,
+            first_kept_entry_id=plan.first_kept_entry_id,
+            tokens_before=plan.tokens_before,
+            usage=summary_result.usage,
+            details=summary_result.details,
+            from_extension=from_extension,
+        )
+        await self._extension_runtime.emit_session_compact(
+            SessionCompactEvent(
+                compaction_entry=compaction,
+                reason="manual",
+                will_retry=False,
+                from_extension=from_extension,
+            )
         )
         return ManualCompactionResult(
-            summary=summary,
-            first_kept_entry_id=first_kept_entry_id,
-            tokens_before=tokens_before,
+            summary=summary_result.text,
+            first_kept_entry_id=plan.first_kept_entry_id,
+            tokens_before=plan.tokens_before,
             estimated_tokens_after=self.context_token_estimate,
             replaced_entry_count=len(compaction.replaces_entry_ids),
+            usage=summary_result.usage,
+            details=summary_result.details,
         )
 
     async def compact(self, instructions: str | None = None) -> str:
         """Generate a manual compaction summary and rebuild active context."""
-        await self._flush_pending_message_writes(context=self._diagnostic_context())
-        plan = self._manual_compaction_plan()
-        summary = await self._generate_compaction_summary(
-            plan.messages_to_summarize,
-            custom_instructions=instructions,
-        )
-        compaction = await self._append_compaction(
-            summary,
-            replace_entry_ids=plan.replace_entry_ids,
-            tokens_before=self.context_token_estimate,
-        )
-        return f"Compacted {len(compaction.replaces_entry_ids)} context entries."
+        try:
+            compaction = await self.compact_detailed(instructions)
+        except ValueError as exc:
+            if str(exc) == "Compaction cancelled by extension":
+                return "Compaction cancelled by extension."
+            raise
+        return f"Compacted {compaction.replaced_entry_count} context entries."
 
     async def aclose(self) -> None:
         """Close every owned extension/provider resource exactly once.
@@ -2749,11 +3241,11 @@ class CodingSession:
 
     def expand_prompt_text(self, text: str) -> str:
         """Expand prompt text using loaded markdown resources."""
-        expanded_prompt = expand_prompt_template_command(text, self._prompt_templates)
-        if expanded_prompt is not None:
-            return expanded_prompt
         expanded_skill = expand_skill_command(text, self._skills)
-        return expanded_skill if expanded_skill is not None else text
+        if expanded_skill is not None:
+            return expanded_skill
+        expanded_prompt = expand_prompt_template_command(text, self._prompt_templates)
+        return expanded_prompt if expanded_prompt is not None else text
 
     async def run_terminal_command(
         self,
@@ -2834,7 +3326,7 @@ class CodingSession:
             )
             raise
 
-        if self._harness.is_running:
+        if self.is_running:
             if streaming_behavior == "steer":
                 self._harness.steer(expanded_content)
                 session_event_0 = self.queue_update_event()
@@ -2851,6 +3343,7 @@ class CodingSession:
                 "CodingSession is already running; pass streaming_behavior to queue a message."
             )
 
+        self._retry_cancel_event.clear()
         await self._flush_pending_message_writes(context=context)
         await self._refresh_runtime_model_limits()
         await self._try_auto_compact(context=context, phase="auto_compact_before_prompt")
@@ -2862,6 +3355,7 @@ class CodingSession:
         auto_name_attempted = False
         overflow_message: AssistantMessage | None = None
         route_failure_message: AssistantMessage | None = None
+        transient_failure_message: AssistantMessage | None = None
         try:
             prompt_message: AgentMessage
             if custom_type is not None:
@@ -2873,7 +3367,15 @@ class CodingSession:
                 )
             else:
                 prompt_message = UserMessage(content=expanded_content)
-            events = self._harness.prompt_message(prompt_message)
+            before_start = await self._extension_runtime.before_agent_start(
+                expanded_content,
+                self.system_prompt,
+            )
+            self._system_prompt_override = before_start.system_prompt
+            events = self._harness.prompt_messages(
+                (prompt_message, *before_start.messages),
+                system=before_start.system_prompt,
+            )
             self._invalidate_context_usage_cache()
             async for event in events:
                 auto_name_message: str | None = None
@@ -2889,22 +3391,36 @@ class CodingSession:
                 if (
                     isinstance(event, MessageEndEvent)
                     and isinstance(event.message, AssistantMessage)
-                    and event.message.stop_reason == "error"
                 ):
-                    self._last_diagnostic_log_path = self._diagnostic_logger.log_assistant_error(
-                        context=context,
-                        phase="agent_loop",
-                        message=event.message,
-                    )
-                    if is_context_overflow_error(event.message):
+                    if event.message.stop_reason == "error":
+                        self._last_diagnostic_log_path = (
+                            self._diagnostic_logger.log_assistant_error(
+                                context=context,
+                                phase="agent_loop",
+                                message=event.message,
+                            )
+                        )
+                    if self._is_recoverable_overflow(event.message):
                         overflow_message = event.message
-                    elif self._should_auto_failover_huggingface_route(event.message):
+                    elif (
+                        event.message.stop_reason == "error"
+                        and self._should_auto_failover_huggingface_route(event.message)
+                    ):
                         route_failure_message = event.message
+                    elif (
+                        event.message.stop_reason == "error"
+                        and self._config.retry_enabled
+                        and self._config.retry_max_retries > 0
+                        and self._is_transient_retryable(event.message)
+                    ):
+                        transient_failure_message = event.message
                 if isinstance(event, AgentEndEvent):
                     yield SessionAgentEndEvent(
                         messages=event.messages,
                         will_retry=(
-                            overflow_message is not None or route_failure_message is not None
+                            overflow_message is not None
+                            or route_failure_message is not None
+                            or transient_failure_message is not None
                         ),
                     )
                 else:
@@ -2914,67 +3430,21 @@ class CodingSession:
                 if auto_name_message is not None:
                     await self._try_auto_name_session(auto_name_message, context=context)
             if overflow_message is not None:
-                session_event_1 = CompactionStartEvent(reason="overflow")
-                await self._extension_runtime.emit_event(session_event_1)
-                yield session_event_1
-                compacted = await self._try_overflow_compact(context=context)
-                compaction_end = CompactionEndEvent(
-                    reason="overflow",
-                    result=None,
-                    aborted=not compacted,
-                    will_retry=compacted,
-                    error_message=None if compacted else "Overflow compaction failed",
-                )
-                await self._extension_runtime.emit_event(compaction_end)
-                yield compaction_end
-                if compacted:
-                    retry_start = AutoRetryStartEvent(
-                        attempt=1,
-                        max_attempts=1,
-                        delay_ms=0,
-                        error_message=overflow_message.error_message or "Context overflow",
-                    )
-                    await self._extension_runtime.emit_event(retry_start)
-                    yield retry_start
-                    events = self._harness.continue_()
-                    self._invalidate_context_usage_cache()
-                    overflow_retry_error: str | None = None
-                    async for retry_event in events:
-                        if isinstance(retry_event, ToolExecutionEndEvent):
-                            self._invalidate_context_usage_cache()
-                        if (
-                            isinstance(retry_event, MessageEndEvent)
-                            and isinstance(retry_event.message, AssistantMessage)
-                            and retry_event.message.stop_reason in {"error", "aborted"}
-                        ):
-                            overflow_retry_error = (
-                                retry_event.message.error_message or "Provider request aborted"
-                            )
-                            if retry_event.message.stop_reason == "error":
-                                self._last_diagnostic_log_path = (
-                                    self._diagnostic_logger.log_assistant_error(
-                                        context=context,
-                                        phase="agent_loop_retry",
-                                        message=retry_event.message,
-                                    )
-                                )
-                        if isinstance(retry_event, AgentEndEvent):
-                            yield SessionAgentEndEvent(
-                                messages=retry_event.messages,
-                                will_retry=False,
-                            )
-                        else:
-                            yield retry_event
-                    session_event_4 = AutoRetryEndEvent(
-                        success=overflow_retry_error is None,
-                        attempt=1,
-                        final_error=overflow_retry_error,
-                    )
-                    await self._extension_runtime.emit_event(session_event_4)
-                    yield session_event_4
+                async for recovery_event in self._run_overflow_recovery(
+                    overflow_message,
+                    context=context,
+                ):
+                    yield recovery_event
             elif route_failure_message is not None:
                 async for failover_event in self._run_huggingface_route_failover(context=context):
                     yield failover_event
+            elif transient_failure_message is not None:
+                async for transient_event in self._run_transient_retries(
+                    transient_failure_message,
+                    context=context,
+                ):
+                    yield transient_event
+                await self._try_auto_compact(context=context, phase="auto_compact_after_prompt")
             else:
                 await self._try_auto_compact(context=context, phase="auto_compact_after_prompt")
         except Exception as exc:
@@ -2988,13 +3458,19 @@ class CodingSession:
             try:
                 await self._reconcile_run_persistence(events, context=context)
             finally:
-                if events is not None:
-                    settled_event = await self._dispatch_agent_settled()
+                try:
+                    if events is not None:
+                        settled_event = await self._dispatch_agent_settled()
+                finally:
+                    self._system_prompt_override = None
         if settled_event is not None:
             yield settled_event
 
     async def continue_(self) -> AsyncIterator[CodingSessionEvent]:
         """Continue the agent from restored state and persist new messages."""
+        if self.is_running:
+            raise RuntimeError("CodingSession is already running")
+        self._retry_cancel_event.clear()
         context = self._diagnostic_context()
         await self._flush_pending_message_writes(context=context)
         await self._refresh_runtime_model_limits()
@@ -3003,35 +3479,63 @@ class CodingSession:
         self._persisted_message_ids.clear()
         events: AsyncIterator[AgentEvent] | None = None
         settled_event: AgentSettledEvent | None = None
+        overflow_message: AssistantMessage | None = None
         route_failure_message: AssistantMessage | None = None
+        transient_failure_message: AssistantMessage | None = None
         try:
             events = self._harness.continue_()
             self._invalidate_context_usage_cache()
             async for event in events:
                 if isinstance(event, ToolExecutionEndEvent):
                     self._invalidate_context_usage_cache()
-                if (
-                    isinstance(event, MessageEndEvent)
-                    and isinstance(event.message, AssistantMessage)
-                    and event.message.stop_reason == "error"
+                if isinstance(event, MessageEndEvent) and isinstance(
+                    event.message, AssistantMessage
                 ):
-                    self._last_diagnostic_log_path = self._diagnostic_logger.log_assistant_error(
-                        context=context,
-                        phase="agent_loop",
-                        message=event.message,
-                    )
-                    if self._should_auto_failover_huggingface_route(event.message):
-                        route_failure_message = event.message
+                    message = event.message
+                    if self._is_recoverable_overflow(message):
+                        overflow_message = message
+                    elif message.stop_reason == "error":
+                        self._last_diagnostic_log_path = (
+                            self._diagnostic_logger.log_assistant_error(
+                                context=context,
+                                phase="agent_loop",
+                                message=message,
+                            )
+                        )
+                        if self._should_auto_failover_huggingface_route(message):
+                            route_failure_message = message
+                        elif (
+                            self._config.retry_enabled
+                            and self._config.retry_max_retries > 0
+                            and self._is_transient_retryable(message)
+                        ):
+                            transient_failure_message = message
                 if isinstance(event, AgentEndEvent):
                     yield SessionAgentEndEvent(
                         messages=event.messages,
-                        will_retry=route_failure_message is not None,
+                        will_retry=(
+                            overflow_message is not None
+                            or route_failure_message is not None
+                            or transient_failure_message is not None
+                        ),
                     )
                 else:
                     yield event
-            if route_failure_message is not None:
+            if overflow_message is not None:
+                async for recovery_event in self._run_overflow_recovery(
+                    overflow_message,
+                    context=context,
+                ):
+                    yield recovery_event
+            elif route_failure_message is not None:
                 async for failover_event in self._run_huggingface_route_failover(context=context):
                     yield failover_event
+            elif transient_failure_message is not None:
+                async for retry_event in self._run_transient_retries(
+                    transient_failure_message,
+                    context=context,
+                ):
+                    yield retry_event
             await self._try_auto_compact(context=context, phase="auto_compact_after_continue")
         except Exception as exc:
             self._last_diagnostic_log_path = self._diagnostic_logger.log_exception(
@@ -3126,8 +3630,6 @@ class CodingSession:
             )
             staged.append(copied_entry)
             parent_id = copied_entry.id
-        staged.append(LeafEntry(parent_id=parent_id, entry_id=parent_id))
-
         if self._config.defer_authoritative_writes:
             self._prepared_entries.extend(staged)
             self._last_parent_id = parent_id
@@ -3155,7 +3657,26 @@ class CodingSession:
         if subscribe is not None:
             self._persistence_unsubscribe = subscribe(self._persist_on_message_end)
 
-    async def _persist_on_message_end(self, event: AgentEvent) -> None:
+    def _prepare_next_turn_refresh(self, turn: TurnContext) -> AgentLoopTurnUpdate:
+        """Refresh Pi AgentSession state before each follow-on model call."""
+        system = (
+            self._system_prompt_override
+            if self._system_prompt_override is not None
+            else self._harness.config.system
+        )
+        return AgentLoopTurnUpdate(
+            context=AgentContext(
+                system=system,
+                messages=list(turn.context.messages),
+                tools=list(self._harness.config.tools),
+            ),
+            provider=self._harness.config.provider,
+            model=self._harness.config.model,
+        )
+
+    async def _persist_on_message_end(
+        self, event: AgentEvent, _signal: object | None = None
+    ) -> None:
         if isinstance(event, MessageEndEvent):
             self._ended_message_ids.add(id(event.message))
             await self._persist_message(event.message)
@@ -3164,7 +3685,7 @@ class CodingSession:
         """Persist one completed message at the active branch tip, idempotently.
 
         Message lifecycle events are the durable-message boundary. Stable entry
-        ids let a retry finish a partially completed message/leaf pair without
+        ids let a retry finish a partially completed message write without
         appending the message a second time.
 
         Only a retry reads durable ids: a first attempt mints ids that cannot
@@ -3179,18 +3700,19 @@ class CodingSession:
             pending = _PendingMessageWrite(
                 message=message,
                 message_entry=entry,
-                leaf_entry=LeafEntry(parent_id=entry.id, entry_id=entry.id),
             )
             self._pending_message_writes[message_id] = pending
+
+        # The in-memory tree advances when the message lifecycle completes,
+        # even if an append reports an ambiguous after-write failure. A later
+        # message must remain a child of this stable pending entry id.
+        self._last_parent_id = pending.message_entry.id
 
         durable_ids = (
             {entry.id for entry in await self._read_session_entries()} if is_retry else frozenset()
         )
         if pending.message_entry.id not in durable_ids:
             await self._append_session_entry(pending.message_entry)
-        self._last_parent_id = pending.message_entry.id
-        if pending.leaf_entry.id not in durable_ids:
-            await self._append_session_entry(pending.leaf_entry)
 
         await self._refresh_persisted_state(leaf_id=self._last_parent_id)
         self._persisted_message_ids.add(message_id)
@@ -3399,21 +3921,91 @@ class CodingSession:
         self,
         *,
         context: AgentCallDiagnosticContext,
-    ) -> bool:
+    ) -> ManualCompactionResult | None:
         try:
             plan = self._recent_preserving_compaction_plan()
             if plan is None:
-                return False
-            summary = await self._generate_compaction_summary(plan.messages_to_summarize)
-            await self._append_compaction(summary, replace_entry_ids=plan.replace_entry_ids)
-            return True
+                return None
+            hook = await self._extension_runtime.before_session_compact(
+                SessionBeforeCompactEvent(
+                    preparation=plan,
+                    branch_entries=await self._read_session_entries(),
+                    custom_instructions=None,
+                    reason="overflow",
+                    will_retry=True,
+                )
+            )
+            if hook.cancel:
+                return None
+            from_extension = hook.summary is not None
+            summary_result = (
+                _SummaryResult(text=hook.summary, usage=Usage(), details={})
+                if hook.summary is not None
+                else await self._generate_compaction_plan_summary(plan)
+            )
+            compaction = await self._append_compaction(
+                summary_result.text,
+                replace_entry_ids=plan.replace_entry_ids,
+                first_kept_entry_id=plan.first_kept_entry_id,
+                tokens_before=plan.tokens_before,
+                usage=summary_result.usage,
+                details=summary_result.details,
+                from_extension=from_extension,
+            )
+            await self._extension_runtime.emit_session_compact(
+                SessionCompactEvent(
+                    compaction_entry=compaction,
+                    reason="overflow",
+                    will_retry=True,
+                    from_extension=from_extension,
+                )
+            )
+            return ManualCompactionResult(
+                summary=summary_result.text,
+                first_kept_entry_id=plan.first_kept_entry_id,
+                tokens_before=plan.tokens_before,
+                estimated_tokens_after=self.context_token_estimate,
+                replaced_entry_count=len(compaction.replaces_entry_ids),
+                usage=summary_result.usage,
+                details=summary_result.details,
+            )
         except Exception as exc:  # noqa: BLE001 - the original overflow remains visible
             self._last_diagnostic_log_path = self._diagnostic_logger.log_exception(
                 context=context,
                 phase="overflow_compact",
                 exc=exc,
             )
+            return None
+
+    def _drop_retriable_assistant_tail(self) -> None:
+        messages = self._harness.messages
+        if (
+            messages
+            and isinstance(messages[-1], AssistantMessage)
+            and messages[-1].stop_reason in {"error", "length"}
+        ):
+            self._harness.replace_messages(messages[:-1])
+
+    def _is_recoverable_overflow(self, message: AssistantMessage) -> bool:
+        return self._auto_compact_enabled and (
+            is_context_overflow_error(message) or self._is_recoverable_length(message)
+        )
+
+    def _is_recoverable_length(self, message: AssistantMessage) -> bool:
+        if not self._auto_compact_enabled:
             return False
+        if message.provider != self.provider_name or message.model != self.model:
+            return False
+        desired_max_output = 0
+        if self._runtime_model_limits_key == (self.provider_name, self.model):
+            limits = self._runtime_model_limits
+            if limits is not None and limits.max_output_tokens is not None:
+                desired_max_output = limits.max_output_tokens
+        if desired_max_output == 0:
+            provider = self._active_provider_config()
+            if provider is not None:
+                desired_max_output = provider_model_max_tokens(provider, self.model) or 0
+        return is_recoverable_length(message, desired_max_output)
 
     async def _try_auto_name_session(
         self,
@@ -3502,42 +4094,161 @@ class CodingSession:
         plan = self._recent_preserving_compaction_plan()
         if plan is None:
             return False
-        summary = await self._generate_compaction_summary(plan.messages_to_summarize)
-        await self._append_compaction(summary, replace_entry_ids=plan.replace_entry_ids)
+        hook = await self._extension_runtime.before_session_compact(
+            SessionBeforeCompactEvent(
+                preparation=plan,
+                branch_entries=await self._read_session_entries(),
+                custom_instructions=None,
+                reason="threshold",
+                will_retry=False,
+            )
+        )
+        if hook.cancel:
+            return False
+        from_extension = hook.summary is not None
+        summary_result = (
+            _SummaryResult(text=hook.summary, usage=Usage(), details={})
+            if hook.summary is not None
+            else await self._generate_compaction_plan_summary(plan)
+        )
+        compaction = await self._append_compaction(
+            summary_result.text,
+            replace_entry_ids=plan.replace_entry_ids,
+            first_kept_entry_id=plan.first_kept_entry_id,
+            tokens_before=plan.tokens_before,
+            usage=summary_result.usage,
+            details=summary_result.details,
+            from_extension=from_extension,
+        )
+        await self._extension_runtime.emit_session_compact(
+            SessionCompactEvent(
+                compaction_entry=compaction,
+                reason="threshold",
+                will_retry=False,
+                from_extension=from_extension,
+            )
+        )
         return True
+
+    async def _generate_compaction_plan_summary(
+        self,
+        plan: CompactionPlan,
+        *,
+        custom_instructions: str | None = None,
+    ) -> _SummaryResult:
+        if not plan.turn_prefix_messages:
+            result = await self._generate_compaction_summary(
+                plan.messages_to_summarize,
+                custom_instructions=custom_instructions,
+                previous_summary=plan.previous_summary,
+            )
+        else:
+            history = _SummaryResult(text="No prior history.", usage=Usage(), details={})
+            if plan.messages_to_summarize or plan.previous_summary is not None:
+                history = await self._generate_compaction_summary(
+                    plan.messages_to_summarize,
+                    custom_instructions=custom_instructions,
+                    previous_summary=plan.previous_summary,
+                )
+            turn_prefix = await self._complete_summary_prompt(
+                build_turn_prefix_summary_prompt(plan.turn_prefix_messages),
+                system=SUMMARIZATION_SYSTEM_PROMPT,
+                failure_label="Turn prefix summarization",
+            )
+            result = _SummaryResult(
+                text=(
+                    f"{history.text}\n\n---\n\n"
+                    f"**Turn Context (split turn):**\n\n{turn_prefix.text}"
+                ),
+                usage=_combine_usage(history.usage, turn_prefix.usage),
+                details={},
+            )
+
+        details: dict[str, JSONValue] = {
+            "readFiles": list(plan.read_files),
+            "modifiedFiles": list(plan.modified_files),
+        }
+        return _SummaryResult(
+            text=append_file_operations(
+                result.text,
+                read_files=plan.read_files,
+                modified_files=plan.modified_files,
+            ),
+            usage=result.usage,
+            details=details,
+        )
 
     async def _generate_compaction_summary(
         self,
         messages: tuple[AgentMessage, ...],
         *,
         custom_instructions: str | None = None,
-    ) -> str:
+        previous_summary: str | None = None,
+    ) -> _SummaryResult:
         prompt = build_compaction_summary_prompt(
             messages,
             custom_instructions=custom_instructions,
+            previous_summary=previous_summary,
         )
-        text_parts: list[str] = []
-        final_text: str | None = None
-        summary_messages: list[AgentMessage] = [UserMessage(content=prompt)]
-        async for event in self._harness.config.provider.stream_response(
-            model=self.model,
+        return await self._complete_summary_prompt(
+            prompt,
             system=SUMMARIZATION_SYSTEM_PROMPT,
-            messages=summary_messages,
-            tools=[],
-        ):
-            if isinstance(event, TextDeltaEvent):
-                text_parts.append(event.delta)
-            elif isinstance(event, AssistantDoneEvent):
-                final_text = event.message.text
-            elif isinstance(event, AssistantErrorEvent):
+            failure_label="Compaction summarization",
+        )
+
+    async def _complete_summary_prompt(
+        self,
+        prompt: str,
+        *,
+        system: str,
+        failure_label: str,
+    ) -> _SummaryResult:
+        summary_messages: list[AgentMessage] = [UserMessage(content=prompt)]
+        summary_session_id = f"{self.session_id or 'tau'}:summary:{uuid4().hex}"
+        signal = _EventCancellationToken(self._retry_cancel_event)
+        attempt = 0
+        while True:
+            text_parts: list[str] = []
+            final_message: AssistantMessage | None = None
+            async for event in self._harness.config.provider.stream_response(
+                model=self.model,
+                system=system,
+                messages=summary_messages,
+                tools=[],
+                signal=signal,
+                session_id=summary_session_id,
+            ):
+                if isinstance(event, TextDeltaEvent):
+                    text_parts.append(event.delta)
+                elif isinstance(event, AssistantDoneEvent):
+                    final_message = event.message
+                    break
+                elif isinstance(event, AssistantErrorEvent):
+                    final_message = event.error
+                    break
+
+            if final_message is None:
+                raise RuntimeError(f"{failure_label} ended without a terminal response")
+            if final_message.stop_reason == "error":
+                if (
+                    self._config.retry_enabled
+                    and
+                    attempt < self._config.retry_max_retries
+                    and is_retryable_assistant_error(final_message)
+                ):
+                    delay_ms = self._config.retry_base_delay_ms * (2**attempt)
+                    attempt += 1
+                    if await self._retry_delay_cancelled(delay_ms):
+                        raise RuntimeError(f"{failure_label} was cancelled")
+                    continue
                 raise RuntimeError(
-                    f"Compaction summarization failed: {event.error.error_message or event.reason}"
+                    f"{failure_label} failed: {final_message.error_message or 'Unknown error'}"
                 )
 
-        summary = (final_text if final_text is not None else "".join(text_parts)).strip()
-        if not summary:
-            raise RuntimeError("Compaction summarization returned an empty summary")
-        return summary
+            summary = (final_message.text or "".join(text_parts)).strip()
+            if not summary:
+                raise RuntimeError(f"{failure_label} returned an empty summary")
+            return _SummaryResult(text=summary, usage=final_message.usage, details={})
 
     async def _summarize_branch_messages(
         self,
@@ -3545,46 +4256,88 @@ class CodingSession:
         *,
         custom_instructions: str | None = None,
         replace_instructions: bool = False,
-    ) -> str:
-        try:
-            summary = await summarize_branch_messages_with_model(
-                provider=self._harness.config.provider,
-                model=self.model,
-                messages=messages,
+    ) -> _SummaryResult:
+        generated = await self._complete_summary_prompt(
+            build_branch_summary_prompt(
+                messages,
                 custom_instructions=custom_instructions,
                 replace_instructions=replace_instructions,
-            )
-        except Exception:
-            summary = None
-        return summary or summarize_messages_for_compaction(messages)
-
-    def _manual_compaction_plan(self) -> CompactionPlan:
-        rows = self._active_context_rows()
-        if not rows:
-            raise ValueError("No active context messages to compact")
-        return CompactionPlan(
-            replace_entry_ids=tuple(entry_id for entry_id, _message in rows),
-            messages_to_summarize=tuple(message for _entry_id, message in rows),
+            ),
+            system=BRANCH_SUMMARY_SYSTEM_PROMPT,
+            failure_label="Branch summarization",
+        )
+        read_files, modified_files = file_operations_from_messages(messages)
+        details: dict[str, JSONValue] = {
+            "readFiles": read_files,
+            "modifiedFiles": modified_files,
+        }
+        return _SummaryResult(
+            text=add_branch_summary_context(generated.text, messages),
+            usage=generated.usage,
+            details=details,
         )
 
+    def _manual_compaction_plan(self) -> CompactionPlan:
+        plan = self._recent_preserving_compaction_plan()
+        if plan is None:
+            raise ValueError("Nothing to compact (session too small)")
+        return plan
+
     def _recent_preserving_compaction_plan(self) -> CompactionPlan | None:
+        if self._state.entries and isinstance(self._state.entries[-1], CompactionEntry):
+            return None
         rows = self._active_context_rows()
         if len(rows) < 2:
             return None
-
-        first_kept_index = _first_recent_context_index(
+        previous_summary: str | None = None
+        boundary_start = 0
+        if isinstance(rows[0][1], CompactionSummaryMessage):
+            previous_summary = rows[0][1].summary
+            boundary_start = 1
+        cut_index, turn_start_index = _find_pi_compaction_cut(
             rows,
+            start_index=boundary_start,
             keep_recent_tokens=DEFAULT_COMPACTION_KEEP_RECENT_TOKENS,
         )
-        if first_kept_index <= 0:
+        history_end = turn_start_index if turn_start_index is not None else cut_index
+        messages_to_summarize = tuple(
+            message for _entry_id, message in rows[boundary_start:history_end]
+        )
+        turn_prefix_messages = (
+            tuple(message for _entry_id, message in rows[turn_start_index:cut_index])
+            if turn_start_index is not None
+            else ()
+        )
+        if not messages_to_summarize and not turn_prefix_messages:
             return None
-
-        replaced = rows[:first_kept_index]
-        if not replaced:
-            return None
+        read_files, modified_files = file_operations_from_messages(
+            (*messages_to_summarize, *turn_prefix_messages)
+        )
+        if previous_summary is not None:
+            previous_entry = next(
+                (
+                    entry
+                    for entry in self._state.entries
+                    if isinstance(entry, CompactionEntry) and entry.id == rows[0][0]
+                ),
+                None,
+            )
+            if previous_entry is not None and previous_entry.details is not None:
+                previous_read = previous_entry.details.get("readFiles", [])
+                previous_modified = previous_entry.details.get("modifiedFiles", [])
+                read_files = _merge_string_lists(read_files, previous_read)
+                modified_files = _merge_string_lists(modified_files, previous_modified)
+        modified_set = set(modified_files)
+        read_files = [path for path in read_files if path not in modified_set]
         return CompactionPlan(
-            replace_entry_ids=tuple(entry_id for entry_id, _message in replaced),
-            messages_to_summarize=tuple(message for _entry_id, message in replaced),
+            replace_entry_ids=tuple(entry_id for entry_id, _message in rows[:cut_index]),
+            first_kept_entry_id=rows[cut_index][0],
+            messages_to_summarize=messages_to_summarize,
+            turn_prefix_messages=turn_prefix_messages,
+            previous_summary=previous_summary,
+            tokens_before=self.context_token_estimate,
+            read_files=tuple(read_files),
+            modified_files=tuple(modified_files),
         )
 
     def _active_context_rows(self) -> tuple[tuple[str, AgentMessage], ...]:
@@ -3597,6 +4350,9 @@ class CodingSession:
         replace_entry_ids: tuple[str, ...],
         first_kept_entry_id: str | None = None,
         tokens_before: int | None = None,
+        usage: Usage | None = None,
+        details: dict[str, JSONValue] | None = None,
+        from_extension: bool = False,
     ) -> CompactionEntry:
         if not replace_entry_ids:
             raise ValueError("No active context messages to compact")
@@ -3607,10 +4363,11 @@ class CodingSession:
             replaces_entry_ids=list(replace_entry_ids),
             first_kept_entry_id=first_kept_entry_id,
             tokens_before=tokens_before,
+            usage=usage,
+            details=details,
+            from_extension=from_extension,
         )
         await self._append_session_entry(compaction)
-        leaf = LeafEntry(parent_id=compaction.id, entry_id=compaction.id)
-        await self._append_session_entry(leaf)
         self._last_parent_id = compaction.id
 
         await self._refresh_persisted_state(leaf_id=compaction.id)
@@ -3619,52 +4376,78 @@ class CodingSession:
         return compaction
 
 
-def _first_recent_context_index(
+def _find_pi_compaction_cut(
     rows: tuple[tuple[str, AgentMessage], ...],
     *,
+    start_index: int,
     keep_recent_tokens: int,
-) -> int:
-    if keep_recent_tokens <= 0:
-        return len(rows)
+) -> tuple[int, int | None]:
+    cut_points = [
+        index
+        for index in range(start_index, len(rows))
+        if not isinstance(rows[index][1], ToolResultMessage)
+    ]
+    if not cut_points:
+        return start_index, None
 
+    cut_index = cut_points[0]
     accumulated_tokens = 0
-    candidate_index: int | None = None
-    for index in range(len(rows) - 1, -1, -1):
+    for index in range(len(rows) - 1, start_index - 1, -1):
         _entry_id, message = rows[index]
-        accumulated_tokens += estimate_message_tokens(message)
+        accumulated_tokens += _estimate_pi_compaction_tokens(message)
         if accumulated_tokens >= keep_recent_tokens:
-            candidate_index = index
+            for point in cut_points:
+                if point >= index:
+                    cut_index = point
+                    break
             break
 
-    if candidate_index is None:
-        return 0
-
-    candidate_message = rows[candidate_index][1]
-    if candidate_message.role == "user":
-        if candidate_index > 0:
-            return candidate_index
-        next_user_index = _next_user_message_index(rows, start=1)
-        return next_user_index if next_user_index is not None else 0
-
-    next_user_index = _next_user_message_index(rows, start=candidate_index + 1)
-    if next_user_index is not None:
-        return next_user_index
-
-    for index in range(candidate_index, len(rows)):
-        if rows[index][1].role != "toolResult":
-            return index
-    return len(rows)
+    if _is_pi_turn_start(rows[cut_index][1]):
+        return cut_index, None
+    for index in range(cut_index, start_index - 1, -1):
+        if _is_pi_turn_start(rows[index][1]):
+            return cut_index, index
+    return cut_index, None
 
 
-def _next_user_message_index(
-    rows: tuple[tuple[str, AgentMessage], ...],
-    *,
-    start: int,
-) -> int | None:
-    for index in range(start, len(rows)):
-        if rows[index][1].role == "user":
-            return index
-    return None
+def _is_pi_turn_start(message: AgentMessage) -> bool:
+    return isinstance(
+        message,
+        (
+            UserMessage,
+            BashExecutionMessage,
+            CustomMessage,
+            BranchSummaryMessage,
+            CompactionSummaryMessage,
+        ),
+    )
+
+
+def _estimate_pi_compaction_tokens(message: AgentMessage) -> int:
+    chars = 0
+    if isinstance(message, UserMessage | CustomMessage | ToolResultMessage):
+        chars = _pi_content_chars(message.content)
+    elif isinstance(message, AssistantMessage):
+        for block in message.content:
+            if isinstance(block, TextContent):
+                chars += len(block.text)
+            elif isinstance(block, ThinkingContent):
+                chars += len(block.thinking)
+            else:
+                chars += len(block.name) + len(
+                    json.dumps(block.arguments, ensure_ascii=False, separators=(",", ":"))
+                )
+    elif isinstance(message, BashExecutionMessage):
+        chars = len(message.command) + len(message.output)
+    elif isinstance(message, BranchSummaryMessage | CompactionSummaryMessage):
+        chars = len(message.summary)
+    return (chars + 3) // 4
+
+
+def _pi_content_chars(content: str | list[TextContent | ImageContent]) -> int:
+    if isinstance(content, str):
+        return len(content)
+    return sum(len(block.text) if isinstance(block, TextContent) else 4_800 for block in content)
 
 
 def is_context_overflow_error(message: AssistantMessage) -> bool:
@@ -3688,6 +4471,15 @@ def is_context_overflow_error(message: AssistantMessage) -> bool:
     return any(marker in normalized for marker in markers)
 
 
+def is_recoverable_length(message: AssistantMessage, desired_max_output: int) -> bool:
+    """Port Pi's bounded length-stop recovery predicate."""
+    return (
+        message.stop_reason == "length"
+        and desired_max_output > 0
+        and message.usage.output < desired_max_output
+    )
+
+
 def is_retryable_huggingface_route_error(message: AssistantMessage) -> bool:
     """Return whether a pre-output Hugging Face HTTP failure is safe to reroute."""
     if message.content:
@@ -3704,12 +4496,18 @@ def is_retryable_huggingface_route_error(message: AssistantMessage) -> bool:
 def _detach_missing_parents(entries: list[SessionEntry]) -> list[SessionEntry]:
     """Return entries with dangling parent pointers detached from external history."""
     entry_ids = {entry.id for entry in entries}
-    return [
+    detached = [
         entry.model_copy(update={"parent_id": None})
         if entry.parent_id is not None and entry.parent_id not in entry_ids
         else entry
         for entry in entries
     ]
+    if len(detached) > 1 and all(entry.parent_id is None for entry in detached):
+        return [
+            entry if index == 0 else entry.model_copy(update={"parent_id": detached[index - 1].id})
+            for index, entry in enumerate(detached)
+        ]
+    return detached
 
 
 def _last_parent_id_from_state(state: SessionState) -> str | None:
@@ -3717,13 +4515,6 @@ def _last_parent_id_from_state(state: SessionState) -> str | None:
         return state.active_leaf_id
     if state.entries:
         return state.entries[-1].id
-    return None
-
-
-def _latest_leaf_entry(entries: list[SessionEntry]) -> LeafEntry | None:
-    for entry in reversed(entries):
-        if isinstance(entry, LeafEntry):
-            return entry
     return None
 
 
@@ -3972,6 +4763,11 @@ async def _prepare_provider_selection(
                     model=model,
                     credential_store=provider_registry.credentials,
                     environment=provider_registry.environment,
+                    provider_hooks=(
+                        config.extension_runtime.provider_hooks
+                        if config.extension_runtime is not None
+                        else None
+                    ),
                 )
             except (ProviderConfigError, RuntimeError) as exc:
                 raise ProviderConfigError(str(exc)) from exc
@@ -4018,6 +4814,11 @@ async def _prepare_provider_selection(
             thinking_level=resolve_startup_thinking_level(
                 selection.provider,
                 selection.model,
+            ),
+            provider_hooks=(
+                config.extension_runtime.provider_hooks
+                if config.extension_runtime is not None
+                else None
             ),
         )
     except RuntimeError as exc:
@@ -4170,7 +4971,18 @@ def _create_runtime_provider(
     thinking_level: ThinkingLevel | None,
     inference_provider: str | None,
     response_headers_observer: Callable[[Mapping[str, str]], None] | None = None,
+    provider_hooks: ProviderHooks | None = None,
 ) -> ClosableModelProvider:
+    if provider_hooks is not None:
+        return create_model_provider(
+            provider,
+            credential_store=credential_store,
+            model=model,
+            thinking_level=thinking_level,
+            inference_provider=inference_provider,
+            response_headers_observer=response_headers_observer,
+            provider_hooks=provider_hooks,
+        )
     if inference_provider is None and response_headers_observer is None:
         return create_model_provider(
             provider,

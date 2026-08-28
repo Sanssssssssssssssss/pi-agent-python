@@ -23,5 +23,6 @@ website/.hugo_build.lock
 
 # Agent tools
 .firecrawl/
+artifacts/
 # Local scratch tooling
 scripts/analyze_session.py

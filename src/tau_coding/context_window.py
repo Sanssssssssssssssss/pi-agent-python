@@ -2,14 +2,19 @@
 
 from __future__ import annotations
 
+import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 from tau_agent.messages import (
     AgentMessage,
     AssistantMessage,
+    CompactionSummaryMessage,
+    TextContent,
     ThinkingContent,
     ToolResultMessage,
     UserMessage,
+    convert_to_llm,
     message_text,
 )
 from tau_agent.tools import AgentTool
@@ -22,6 +27,7 @@ DEFAULT_CONTEXT_WINDOW_TOKENS = 128_000
 DEFAULT_COMPACTION_RESERVE_TOKENS = 16_384
 DEFAULT_COMPACTION_KEEP_RECENT_TOKENS = 20_000
 COMPACTION_SUMMARY_PREFIX = "Previous conversation summary:\n"
+TOOL_RESULT_MAX_CHARS = 2_000
 
 SUMMARIZATION_SYSTEM_PROMPT = (
     "You are a context summarization assistant. Your task is to read a conversation "
@@ -277,9 +283,11 @@ def build_compaction_summary_prompt(
     messages: tuple[AgentMessage, ...],
     *,
     custom_instructions: str | None = None,
+    previous_summary: str | None = None,
 ) -> str:
     """Build the model prompt Tau uses to summarize compacted history."""
-    previous_summary, new_messages = _split_previous_compaction_summary(messages)
+    detected_summary, new_messages = _split_previous_compaction_summary(messages)
+    previous_summary = previous_summary if previous_summary is not None else detected_summary
     conversation = serialize_messages_for_compaction(new_messages)
     prompt = f"<conversation>\n{conversation}\n</conversation>\n\n"
     base_prompt = (
@@ -296,27 +304,38 @@ def build_compaction_summary_prompt(
     return f"{prompt}{base_prompt}"
 
 
+def build_turn_prefix_summary_prompt(messages: tuple[AgentMessage, ...]) -> str:
+    """Build Pi's smaller summary request for the discarded prefix of one turn."""
+    conversation = serialize_messages_for_compaction(messages)
+    return f"<conversation>\n{conversation}\n</conversation>\n\n{TURN_PREFIX_SUMMARIZATION_PROMPT}"
+
+
 def serialize_messages_for_compaction(messages: tuple[AgentMessage, ...]) -> str:
-    """Serialize provider-neutral messages for the compaction summarizer."""
+    """Serialize provider messages using Pi's compaction transcript format."""
     if not messages:
         return "(no new messages)"
 
     lines: list[str] = []
-    for index, message in enumerate(messages, start=1):
-        attributes = f"index={index} role={message.role}"
-        if isinstance(message, ToolResultMessage):
-            attributes += f" name={message.tool_name} error={str(message.is_error).lower()}"
-        lines.append(f"<message {attributes}>")
-        text = message_text(message)
-        if text:
-            lines.append(text)
-        if isinstance(message, AssistantMessage) and message.tool_calls:
-            lines.append("<tool-calls>")
-            for call in message.tool_calls:
-                lines.append(f"- {call.name}: {call.arguments}")
-            lines.append("</tool-calls>")
-        lines.append("</message>")
-    return "\n".join(lines)
+    for message in convert_to_llm(list(messages)):
+        if isinstance(message, UserMessage):
+            if message.text:
+                lines.append(f"[User]: {message.text}")
+        elif isinstance(message, AssistantMessage):
+            thinking = [
+                block.thinking for block in message.content if isinstance(block, ThinkingContent)
+            ]
+            if thinking:
+                lines.append(f"[Assistant thinking]: {'\n'.join(thinking)}")
+            if any(isinstance(block, TextContent) for block in message.content):
+                lines.append(f"[Assistant]: {message.text}")
+            calls = [_format_tool_call(call.name, call.arguments) for call in message.tool_calls]
+            if calls:
+                lines.append(f"[Assistant tool calls]: {'; '.join(calls)}")
+        elif isinstance(message, ToolResultMessage) and message.text:
+            lines.append(
+                f"[Tool result]: {_truncate_tool_result(message.text, TOOL_RESULT_MAX_CHARS)}"
+            )
+    return "\n\n".join(lines)
 
 
 def _message_text(message: AgentMessage) -> str:
@@ -344,6 +363,8 @@ def _split_previous_compaction_summary(
         return None, messages
 
     first = messages[0]
+    if isinstance(first, CompactionSummaryMessage):
+        return first.summary, messages[1:]
     if not isinstance(first, UserMessage):
         return None, messages
     text = message_text(first)
@@ -351,3 +372,17 @@ def _split_previous_compaction_summary(
         return None, messages
 
     return text.removeprefix(COMPACTION_SUMMARY_PREFIX), messages[1:]
+
+
+def _truncate_tool_result(text: str, max_chars: int) -> str:
+    if len(text) <= max_chars:
+        return text
+    return f"{text[:max_chars]}\n\n[... {len(text) - max_chars} more characters truncated]"
+
+
+def _format_tool_call(name: str, arguments: Mapping[str, object]) -> str:
+    pairs = ", ".join(
+        f"{key}={json.dumps(value, ensure_ascii=False, separators=(',', ':'))}"
+        for key, value in arguments.items()
+    )
+    return f"{name}({pairs})"

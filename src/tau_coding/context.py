@@ -7,7 +7,13 @@ from pathlib import Path
 from tau_coding.resources import ResourceDiagnostic, TauResourcePaths
 from tau_coding.system_prompt import ProjectContextFile
 
-PROJECT_MARKERS = (".git", "pyproject.toml", "uv.lock", "setup.py", "package.json")
+CONTEXT_FILENAMES = (
+    "AGENTS.override.md",
+    "AGENTS.md",
+    "AGENTS.MD",
+    "CLAUDE.md",
+    "CLAUDE.MD",
+)
 
 
 def discover_project_context(
@@ -42,45 +48,46 @@ def discover_project_context_with_diagnostics(
 
 
 def _context_file_candidates(paths: TauResourcePaths) -> tuple[Path, ...]:
-    candidates: list[Path] = [paths.root / "AGENTS.md"]
+    candidates: list[Path] = []
+    global_context = _context_file_from_dir(paths.root)
+    if global_context is not None:
+        candidates.append(global_context)
     if paths.agents_root is not None:
-        candidates.append(paths.agents_root / "AGENTS.md")
+        agents_context = _context_file_from_dir(paths.agents_root)
+        if agents_context is not None:
+            candidates.append(agents_context)
 
     if paths.cwd is not None and paths.project_resources_enabled:
         cwd = paths.cwd.expanduser().resolve()
-        project_root = _find_project_root(cwd)
-        candidates.extend(_ancestor_agents_files(project_root, cwd))
+        candidates.extend(_ancestor_context_files(cwd))
         tau_paths = paths._paths()
-        candidates.extend(
-            [
-                tau_paths.project_tau_dir(cwd) / "AGENTS.md",
-                tau_paths.project_agents_dir(cwd) / "AGENTS.md",
-            ]
-        )
+        for directory in (
+            tau_paths.project_tau_dir(cwd),
+            tau_paths.project_agents_dir(cwd),
+        ):
+            context_file = _context_file_from_dir(directory)
+            if context_file is not None:
+                candidates.append(context_file)
 
     existing = [path for path in candidates if path.is_file()]
     return tuple(_dedupe_resolved_paths(existing))
 
 
-def _find_project_root(cwd: Path) -> Path:
-    for path in (cwd, *cwd.parents):
-        if any((path / marker).exists() for marker in PROJECT_MARKERS):
-            return path
-    return cwd
+def _context_file_from_dir(directory: Path) -> Path | None:
+    for filename in CONTEXT_FILENAMES:
+        candidate = directory / filename
+        if candidate.is_file():
+            return candidate
+    return None
 
 
-def _ancestor_agents_files(project_root: Path, cwd: Path) -> list[Path]:
-    try:
-        relative = cwd.relative_to(project_root)
-    except ValueError:
-        return [cwd / "AGENTS.md"]
-
-    paths = [project_root / "AGENTS.md"]
-    current = project_root
-    for part in relative.parts:
-        current = current / part
-        paths.append(current / "AGENTS.md")
-    return paths
+def _ancestor_context_files(cwd: Path) -> list[Path]:
+    contexts: list[Path] = []
+    for directory in reversed((cwd, *cwd.parents)):
+        context_file = _context_file_from_dir(directory)
+        if context_file is not None:
+            contexts.append(context_file)
+    return contexts
 
 
 def _dedupe_resolved_paths(paths: list[Path]) -> list[Path]:

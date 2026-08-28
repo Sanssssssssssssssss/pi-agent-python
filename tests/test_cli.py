@@ -1,4 +1,5 @@
 import re
+import sys
 from pathlib import Path
 
 import pytest
@@ -737,8 +738,8 @@ async def test_run_print_mode_uses_custom_and_appended_system_prompt(
     assert "You are an expert coding assistant operating inside Tau" not in system
     assert "Follow project rules." in system
     assert "<available_skills>" in system
-    assert "Current date:" in system
-    assert f"Current working directory: {tmp_path}" in system
+    assert "Current date:" not in system
+    assert f"Current working directory: {tmp_path.as_posix()}" in system
 
 
 @pytest.mark.anyio
@@ -852,7 +853,7 @@ async def test_run_print_mode_persists_session_entries(
     assert [message.role for message in messages] == ["user", "assistant"]
     assert messages[0].content == "Say hello"
     assert messages[1].text == "Done"
-    assert any(entry.type == "leaf" for entry in entries)
+    assert entries[-1].type == "message"
 
 
 @pytest.mark.anyio
@@ -899,9 +900,14 @@ async def test_run_print_mode_terminal_command_adds_context(
 ) -> None:
     storage = JsonlSessionStorage(tmp_path / "print-session.jsonl")
     provider = FakeProvider([])
+    command = (
+        'powershell -NoProfile -Command "[Console]::Write(\'hello\')"'
+        if sys.platform == "win32"
+        else "printf hello"
+    )
 
     ok = await run_print_mode(
-        prompt="! printf hello",
+        prompt=f"! {command}",
         model="fake",
         cwd=tmp_path,
         provider=provider,
@@ -913,7 +919,7 @@ async def test_run_print_mode_terminal_command_adds_context(
     messages = [entry.message for entry in entries if isinstance(entry, MessageEntry)]
 
     assert ok is True
-    assert "$ printf hello" in captured.out
+    assert f"$ {command}" in captured.out
     assert "[added to context]" in captured.out
     assert "hello" in captured.out
     assert len(messages) == 1
@@ -927,9 +933,14 @@ async def test_run_print_mode_terminal_command_can_skip_context(
 ) -> None:
     storage = JsonlSessionStorage(tmp_path / "print-session.jsonl")
     provider = FakeProvider([])
+    command = (
+        'powershell -NoProfile -Command "[Console]::Write(\'hidden\')"'
+        if sys.platform == "win32"
+        else "printf hidden"
+    )
 
     ok = await run_print_mode(
-        prompt="!! printf hidden",
+        prompt=f"!! {command}",
         model="fake",
         cwd=tmp_path,
         provider=provider,
@@ -940,7 +951,7 @@ async def test_run_print_mode_terminal_command_can_skip_context(
     entries = await storage.read_all()
 
     assert ok is True
-    assert "$ printf hidden" in captured.out
+    assert f"$ {command}" in captured.out
     assert "[not added to context]" in captured.out
     assert "hidden" in captured.out
     assert not any(isinstance(entry, MessageEntry) for entry in entries)
@@ -954,7 +965,9 @@ async def test_run_print_mode_expands_skill_commands(
     resource_root = tmp_path / "resources"
     skills_dir = resource_root / "skills" / "testing"
     skills_dir.mkdir(parents=True)
-    (skills_dir / "SKILL.md").write_text("# Testing\nRun pytest.", encoding="utf-8")
+    (skills_dir / "SKILL.md").write_text(
+        "---\ndescription: Test code\n---\n# Testing\nRun pytest.", encoding="utf-8"
+    )
     provider = FakeProvider(
         [
             [

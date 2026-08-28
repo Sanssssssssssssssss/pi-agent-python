@@ -47,7 +47,7 @@ def test_resource_paths_include_agents_and_project_directories(tmp_path: Path) -
     assert paths.append_system_prompt_path == tau_home / "APPEND_SYSTEM.md"
 
 
-def test_system_prompt_files_replace_by_precedence_and_append_in_order(tmp_path: Path) -> None:
+def test_system_prompt_files_use_project_values_before_user_values(tmp_path: Path) -> None:
     cwd = tmp_path / "project"
     tau_home = tmp_path / "home" / ".tau"
     agents_home = tmp_path / "home" / ".agents"
@@ -67,16 +67,13 @@ def test_system_prompt_files_replace_by_precedence_and_append_in_order(tmp_path:
 
     assert resources.custom_prompt == "Project base"
     assert resources.custom_prompt_path == cwd / ".tau" / "SYSTEM.md"
-    assert resources.append_prompt == "User append\n\nProject append"
-    assert resources.append_prompt_paths == (
-        tau_home / "APPEND_SYSTEM.md",
-        cwd / ".tau" / "APPEND_SYSTEM.md",
-    )
+    assert resources.append_prompt == "Project append"
+    assert resources.append_prompt_paths == (cwd / ".tau" / "APPEND_SYSTEM.md",)
     assert [(item.severity, item.path) for item in resources.diagnostics] == [
         ("info", cwd / ".tau" / "SYSTEM.md"),
         ("warning", tau_home / "SYSTEM.md"),
-        ("info", tau_home / "APPEND_SYSTEM.md"),
         ("info", cwd / ".tau" / "APPEND_SYSTEM.md"),
+        ("warning", tau_home / "APPEND_SYSTEM.md"),
     ]
 
 

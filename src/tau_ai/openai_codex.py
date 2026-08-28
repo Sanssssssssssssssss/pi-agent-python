@@ -36,6 +36,7 @@ from tau_ai.content import (
     NON_VISION_TOOL_IMAGE_PLACEHOLDER,
     NON_VISION_USER_IMAGE_PLACEHOLDER,
     text_and_images,
+    transform_messages,
 )
 from tau_ai.env import (
     DEFAULT_OPENAI_COMPATIBLE_MAX_RETRIES,
@@ -47,9 +48,16 @@ from tau_ai.http import create_async_client
 from tau_ai.http_errors import provider_http_error_message
 from tau_ai.model_limits import RuntimeModelLimits
 from tau_ai.openai_cache import openai_prompt_cache_key
-from tau_ai.provider import CancellationToken
+from tau_ai.provider import (
+    CancellationToken,
+    ProviderHooks,
+    apply_provider_headers,
+    apply_provider_payload,
+    emit_provider_response,
+)
 from tau_ai.retry import provider_retry_event, retry_delay_seconds, wait_for_retry
 from tau_ai.stream import canonicalize_provider_stream
+from tau_ai.tool_call_ids import pi_short_hash, responses_tool_call_id
 
 DEFAULT_OPENAI_CODEX_BASE_URL = "https://chatgpt.com/backend-api"
 
@@ -84,6 +92,7 @@ class OpenAICodexConfig:
     # version. This is the oldest known version that advertises GPT-5.6.
     client_version: str = "0.144.3"
     model_catalog_timeout_seconds: float = 5.0
+    provider_hooks: ProviderHooks | None = None
 
 
 class OpenAICodexProvider:
@@ -180,6 +189,9 @@ class OpenAICodexProvider:
                 supports_images=self._config.supports_images,
                 prompt_cache_key=cache_key,
             )
+            request_payload = await apply_provider_payload(
+                self._config.provider_hooks, payload
+            )
             url = _resolve_codex_url(self._config.base_url)
 
             attempt = 0
@@ -195,12 +207,20 @@ class OpenAICodexProvider:
                         originator=self._config.originator,
                         session_id=cache_key,
                     )
+                    headers = await apply_provider_headers(
+                        self._config.provider_hooks, headers
+                    )
                     async with client.stream(
                         "POST",
                         url,
-                        json=payload,
+                        json=request_payload,
                         headers=headers,
                     ) as response:
+                        await emit_provider_response(
+                            self._config.provider_hooks,
+                            response.status_code,
+                            response.headers,
+                        )
                         if response.status_code >= 400:
                             body = await response.aread()
                             body_text = body.decode(errors="replace")
@@ -380,12 +400,29 @@ def _build_codex_payload(
     supports_images: bool = False,
     prompt_cache_key: str | None = None,
 ) -> dict[str, JSONValue]:
+    messages = transform_messages(
+        messages,
+        model=model,
+        provider="openai-codex",
+        api="openai-codex-responses",
+        supports_images=supports_images,
+        normalize_tool_call_id=lambda value, source: responses_tool_call_id(
+            value,
+            source,
+            target_provider="openai-codex",
+            target_api="openai-codex-responses",
+        ),
+    )
     payload: dict[str, JSONValue] = {
         "model": model,
         "store": False,
         "stream": True,
         "instructions": system or "You are a helpful assistant.",
-        "input": _messages_to_responses_input(messages, supports_images=supports_images),
+        "input": _messages_to_responses_input(
+            messages,
+            model=model,
+            supports_images=supports_images,
+        ),
         "text": {"verbosity": "low"},
         "include": ["reasoning.encrypted_content"],
         "tool_choice": "auto",
@@ -404,11 +441,10 @@ def _build_codex_payload(
 
 
 def _messages_to_responses_input(
-    messages: list[AgentMessage], *, supports_images: bool = False
+    messages: list[AgentMessage], *, model: str, supports_images: bool = False
 ) -> list[JSONValue]:
     items: list[JSONValue] = []
-    assistant_index = 0
-    for message in messages:
+    for message_index, message in enumerate(messages):
         if isinstance(message, UserMessage):
             text, images = text_and_images(
                 message.content,
@@ -419,8 +455,16 @@ def _messages_to_responses_input(
             if text:
                 content.append({"type": "input_text", "text": text})
             content.extend(_codex_input_image(image) for image in images)
+            if not content:
+                continue
             items.append({"role": "user", "content": content})
         elif isinstance(message, AssistantMessage):
+            same_provider_and_api = (
+                message.provider == "openai-codex"
+                and message.api == "openai-codex-responses"
+            )
+            different_model = same_provider_and_api and message.model != model
+            text_block_index = 0
             for block in message.content:
                 if isinstance(block, ThinkingContent) and block.thinking_signature:
                     try:
@@ -430,31 +474,45 @@ def _messages_to_responses_input(
                     if isinstance(reasoning_item, dict):
                         items.append(reasoning_item)
                 elif isinstance(block, TextContent):
-                    items.append(
-                        {
-                            "type": "message",
-                            "role": "assistant",
-                            "content": [
-                                {
-                                    "type": "output_text",
-                                    "text": block.text,
-                                    "annotations": [],
-                                }
-                            ],
-                            "status": "completed",
-                            "id": block.text_signature or f"msg_{assistant_index}",
-                        }
+                    signature_id, phase = _parse_text_signature(block.text_signature)
+                    fallback_id = (
+                        f"msg_pi_{message_index}"
+                        if text_block_index == 0
+                        else f"msg_pi_{message_index}_{text_block_index}"
                     )
-                    assistant_index += 1
+                    text_block_index += 1
+                    message_id = signature_id or fallback_id
+                    if len(message_id) > 64:
+                        message_id = f"msg_{pi_short_hash(message_id)}"
+                    message_item: dict[str, JSONValue] = {
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "output_text",
+                                "text": block.text,
+                                "annotations": [],
+                            }
+                        ],
+                        "status": "completed",
+                        "id": message_id,
+                    }
+                    if phase is not None:
+                        message_item["phase"] = phase
+                    items.append(
+                        message_item
+                    )
             for tool_call in message.tool_calls:
                 call_id, item_id = _split_tool_call_id(tool_call.id)
+                if different_model and item_id is not None and item_id.startswith("fc_"):
+                    item_id = None
                 item: dict[str, JSONValue] = {
                     "type": "function_call",
                     "call_id": call_id,
                     "name": tool_call.name,
                     "arguments": dumps(tool_call.arguments),
                 }
-                if item_id:
+                if item_id is not None and item_id.startswith("fc_"):
                     item["id"] = item_id
                 items.append(item)
         elif isinstance(message, ToolResultMessage):
@@ -481,6 +539,20 @@ def _messages_to_responses_input(
                 }
             )
     return items
+
+
+def _parse_text_signature(signature: str | None) -> tuple[str | None, str | None]:
+    if not signature:
+        return None, None
+    if signature.startswith("{"):
+        try:
+            parsed = loads(signature)
+        except (TypeError, ValueError):
+            parsed = None
+        if isinstance(parsed, dict) and parsed.get("v") == 1 and isinstance(parsed.get("id"), str):
+            phase = parsed.get("phase")
+            return parsed["id"], phase if phase in {"commentary", "final_answer"} else None
+    return signature, None
 
 
 def _codex_input_image(image: ImageContent) -> dict[str, JSONValue]:

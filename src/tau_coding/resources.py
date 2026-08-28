@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from yaml import SafeLoader, YAMLError, load  # type: ignore[import-untyped]
 
 from tau_agent.types import JSONValue
 from tau_coding.paths import TauPaths
@@ -59,6 +62,9 @@ class TauResourcePaths:
     agents_root: Path | None = field(default_factory=lambda: Path.home() / ".agents")
     paths: TauPaths | None = None
     project_resources_enabled: bool = True
+    extra_skills_dirs: tuple[Path, ...] = ()
+    extra_prompts_dirs: tuple[Path, ...] = ()
+    extra_themes_dirs: tuple[Path, ...] = ()
 
     @property
     def skills_dir(self) -> Path:
@@ -99,6 +105,7 @@ class TauResourcePaths:
                     paths.project_agents_skills_dir(self.cwd),
                 ]
             )
+        dirs.extend(self.extra_skills_dirs)
         return tuple(_dedupe_paths(dirs))
 
     @property
@@ -112,6 +119,7 @@ class TauResourcePaths:
         dirs = [self.root / "themes"]
         if self.cwd is not None and self.project_resources_enabled:
             dirs.append(paths.project_themes_dir(self.cwd))
+        dirs.extend(self.extra_themes_dirs)
         return tuple(_dedupe_paths(dirs))
 
     @property
@@ -128,6 +136,7 @@ class TauResourcePaths:
                     paths.project_agents_prompts_dir(self.cwd),
                 ]
             )
+        dirs.extend(self.extra_prompts_dirs)
         return tuple(_dedupe_paths(dirs))
 
     def _paths(self) -> TauPaths:
@@ -250,48 +259,58 @@ def _discover_append_system_prompt_files(
     *,
     diagnostics: list[ResourceDiagnostic],
 ) -> tuple[str | None, tuple[Path, ...]]:
-    """Read every append file in broad-to-specific order."""
-    candidates: list[tuple[str, Path]] = [("user", paths.root / "APPEND_SYSTEM.md")]
+    """Select the trusted project append file, otherwise the user file."""
+    candidates: list[tuple[str, Path]] = []
     if paths.cwd is not None and paths.project_resources_enabled:
         candidates.append(("project", paths.cwd / ".tau" / "APPEND_SYSTEM.md"))
+    candidates.append(("user", paths.root / "APPEND_SYSTEM.md"))
 
-    contents: list[str] = []
-    selected_paths: list[Path] = []
-    seen_paths: set[Path] = set()
+    existing: list[tuple[str, Path]] = []
+    seen: set[Path] = set()
     for scope, path in candidates:
+        resolved = path.expanduser()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
         try:
-            resolved_path = path.expanduser().resolve()
-            if resolved_path in seen_paths:
-                continue
-            seen_paths.add(resolved_path)
-            exists = path.exists()
+            exists = resolved.exists()
         except OSError as exc:
             raise ResourceError(
-                f"Could not inspect append system prompt file {path}: {exc}"
+                f"Could not inspect append system prompt file {resolved}: {exc}"
             ) from exc
-        if not exists:
-            continue
-        try:
-            content = path.read_text(encoding="utf-8")
-        except (OSError, UnicodeError) as exc:
-            raise ResourceError(
-                f"Could not read append system prompt file {path} as UTF-8: {exc}"
-            ) from exc
-        contents.append(content)
-        selected_paths.append(path)
+        if exists:
+            existing.append((scope, resolved))
+
+    if not existing:
+        return None, ()
+
+    selected_scope, selected_path = existing[0]
+    try:
+        content = selected_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        raise ResourceError(
+            f"Could not read append system prompt file {selected_path} as UTF-8: {exc}"
+        ) from exc
+
+    diagnostics.append(
+        ResourceDiagnostic(
+            kind="system-prompt",
+            name="append",
+            path=selected_path,
+            severity="info",
+            message=f"selected {selected_scope} system prompt file",
+        )
+    )
+    for _scope, path in existing[1:]:
         diagnostics.append(
             ResourceDiagnostic(
                 kind="system-prompt",
                 name="append",
                 path=path,
-                severity="info",
-                message=f"selected {scope} system prompt file",
+                message=f"shadowed by higher-precedence file {selected_path}",
             )
         )
-
-    if not contents:
-        return None, ()
-    return "\n\n".join(contents), tuple(selected_paths)
+    return content, (selected_path,)
 
 
 def resource_paths_with_cwd(
@@ -310,6 +329,9 @@ def resource_paths_with_cwd(
         agents_root=paths.agents_root,
         paths=paths.paths,
         project_resources_enabled=paths.project_resources_enabled,
+        extra_skills_dirs=paths.extra_skills_dirs,
+        extra_prompts_dirs=paths.extra_prompts_dirs,
+        extra_themes_dirs=paths.extra_themes_dirs,
     )
 
 
@@ -325,38 +347,70 @@ def resource_paths_with_project_trust(
         agents_root=paths.agents_root,
         paths=paths.paths,
         project_resources_enabled=trusted,
+        extra_skills_dirs=paths.extra_skills_dirs,
+        extra_prompts_dirs=paths.extra_prompts_dirs,
+        extra_themes_dirs=paths.extra_themes_dirs,
     )
 
 
-def parse_markdown_resource(text: str) -> tuple[dict[str, str], str]:
-    """Parse minimal YAML-like frontmatter from a markdown resource.
+def resource_paths_with_extensions(
+    paths: TauResourcePaths,
+    *,
+    skill_paths: tuple[Path, ...] = (),
+    prompt_paths: tuple[Path, ...] = (),
+    theme_paths: tuple[Path, ...] = (),
+) -> TauResourcePaths:
+    """Append paths returned by Pi's ``resources_discover`` event."""
+    return TauResourcePaths(
+        root=paths.root,
+        cwd=paths.cwd,
+        agents_root=paths.agents_root,
+        paths=paths.paths,
+        project_resources_enabled=paths.project_resources_enabled,
+        extra_skills_dirs=(*paths.extra_skills_dirs, *skill_paths),
+        extra_prompts_dirs=(*paths.extra_prompts_dirs, *prompt_paths),
+        extra_themes_dirs=(*paths.extra_themes_dirs, *theme_paths),
+    )
 
-    Only simple `key: value` pairs are supported. This keeps resource parsing
-    dependency-free and avoids evaluating arbitrary code.
-    """
+
+class _Yaml12SafeLoader(SafeLoader):  # type: ignore[misc]
+    """Safe loader with YAML 1.2 boolean rules, matching Pi's `yaml` package."""
+
+
+_Yaml12SafeLoader.yaml_implicit_resolvers = {
+    key: [rule for rule in rules if rule[0] != "tag:yaml.org,2002:bool"]
+    for key, rules in SafeLoader.yaml_implicit_resolvers.items()
+}
+_Yaml12SafeLoader.add_implicit_resolver(
+    "tag:yaml.org,2002:bool",
+    re.compile(r"^(?:true|True|TRUE|false|False|FALSE)$"),
+    list("tTfF"),
+)
+
+
+def parse_markdown_resource(text: str) -> tuple[dict[str, JSONValue], str]:
+    """Parse Pi-compatible YAML frontmatter from a markdown resource."""
     normalized = text.replace("\r\n", "\n").replace("\r", "\n")
-    if not normalized.startswith("---\n"):
+    if not normalized.startswith("---"):
         return {}, normalized
 
-    end = normalized.find("\n---", 4)
+    end = normalized.find("\n---", 3)
     if end == -1:
         return {}, normalized
 
     raw_frontmatter = normalized[4:end]
-    body = normalized[end + len("\n---") :]
-    if body.startswith("\n"):
-        body = body[1:]
-
-    metadata: dict[str, str] = {}
-    for line in raw_frontmatter.splitlines():
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
-            continue
-        key, separator, value = stripped.partition(":")
-        if not separator:
-            continue
-        metadata[key.strip()] = value.strip().strip("\"'")
-    return metadata, body
+    body = normalized[end + 4 :].strip()
+    if not raw_frontmatter:
+        return {}, body
+    try:
+        parsed = load(raw_frontmatter, Loader=_Yaml12SafeLoader)
+    except YAMLError as exc:
+        raise ResourceError(str(exc)) from exc
+    if parsed is None:
+        return {}, body
+    if not isinstance(parsed, dict) or not all(isinstance(key, str) for key in parsed):
+        raise ResourceError("frontmatter must be a mapping")
+    return parsed, body
 
 
 def derive_description(content: str) -> str | None:
@@ -371,6 +425,6 @@ def derive_description(content: str) -> str | None:
     return None
 
 
-def metadata_to_json(metadata: dict[str, str]) -> dict[str, JSONValue]:
+def metadata_to_json(metadata: dict[str, JSONValue]) -> dict[str, JSONValue]:
     """Convert string metadata into JSON-like values."""
     return dict(metadata)

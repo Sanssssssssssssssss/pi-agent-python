@@ -9,7 +9,14 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal, Protocol, cast
 from uuid import uuid4
 
-from tau_agent.messages import AgentMessage, ToolResultMessage
+from tau_agent.messages import (
+    AgentMessage,
+    CustomMessage,
+    ImageContent,
+    TextContent,
+    ToolResultMessage,
+    Usage,
+)
 from tau_agent.tools import AgentTool, AgentToolResult
 from tau_agent.types import JSONValue
 
@@ -51,6 +58,18 @@ LIFECYCLE_EVENT_TYPES: frozenset[str] = frozenset(
     {
         "session_start",
         "session_shutdown",
+        "resources_discover",
+        "context",
+        "before_agent_start",
+        "before_provider_request",
+        "before_provider_headers",
+        "after_provider_response",
+        "session_before_switch",
+        "session_before_fork",
+        "session_before_compact",
+        "session_compact",
+        "session_before_tree",
+        "session_tree",
         "input",
         "tool_call",
         "tool_result",
@@ -58,7 +77,9 @@ LIFECYCLE_EVENT_TYPES: frozenset[str] = frozenset(
     }
 )
 
-SessionLifecycleReason = Literal["startup", "reload", "new", "resume", "branch", "quit"]
+SessionLifecycleReason = Literal[
+    "startup", "reload", "new", "resume", "fork", "branch", "quit"
+]
 DeliverAs = Literal["steer", "follow_up"]
 NotifyLevel = Literal["info", "warning", "error"]
 
@@ -414,6 +435,7 @@ class SessionStartEvent:
     """Payload for the `session_start` lifecycle event."""
 
     reason: SessionLifecycleReason
+    type: Literal["session_start"] = field(default="session_start", init=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -421,6 +443,173 @@ class SessionShutdownEvent:
     """Payload for the `session_shutdown` lifecycle event."""
 
     reason: SessionLifecycleReason
+    type: Literal["session_shutdown"] = field(default="session_shutdown", init=False)
+
+
+@dataclass(frozen=True, slots=True)
+class ResourcesDiscoverEvent:
+    """Pi's post-``session_start`` resource-extension event."""
+
+    cwd: Path
+    reason: Literal["startup", "reload"]
+    type: Literal["resources_discover"] = field(default="resources_discover", init=False)
+
+
+@dataclass(frozen=True, slots=True)
+class ResourcesDiscoverResult:
+    """Additional resource paths contributed by one extension."""
+
+    skill_paths: Sequence[Path | str] = ()
+    prompt_paths: Sequence[Path | str] = ()
+    theme_paths: Sequence[Path | str] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class ContextHookEvent:
+    """Messages immediately before coding-session to LLM conversion."""
+
+    messages: list[AgentMessage]
+    type: Literal["context"] = field(default="context", init=False)
+
+
+@dataclass(frozen=True, slots=True)
+class ContextHookResult:
+    """Optional replacement messages; handlers chain in registration order."""
+
+    messages: Sequence[AgentMessage] | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class MessageEndHookResult:
+    """Replace a finalized message while preserving its role."""
+
+    message: AgentMessage | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class BeforeAgentStartEvent:
+    """Expanded prompt and assembled system prompt before a new agent run."""
+
+    prompt: str
+    system_prompt: str
+    type: Literal["before_agent_start"] = field(default="before_agent_start", init=False)
+
+
+@dataclass(frozen=True, slots=True)
+class BeforeAgentStartResult:
+    """One injected custom message and/or a chained per-turn system prompt."""
+
+    message: CustomMessage | None = None
+    system_prompt: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class BeforeAgentStartOutcome:
+    """Combined result of all ``before_agent_start`` handlers."""
+
+    messages: tuple[CustomMessage, ...] = ()
+    system_prompt: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class SessionBeforeSwitchEvent:
+    reason: Literal["new", "resume"]
+    target_session_file: Path | None = None
+    type: Literal["session_before_switch"] = field(
+        default="session_before_switch", init=False
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class SessionBeforeForkEvent:
+    entry_id: str
+    position: Literal["before", "at"]
+    type: Literal["session_before_fork"] = field(default="session_before_fork", init=False)
+
+
+@dataclass(frozen=True, slots=True)
+class SessionBeforeOperationResult:
+    cancel: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class SessionBeforeCompactEvent:
+    preparation: object
+    branch_entries: Sequence[object]
+    custom_instructions: str | None
+    reason: Literal["manual", "threshold", "overflow"]
+    will_retry: bool
+    type: Literal["session_before_compact"] = field(
+        default="session_before_compact", init=False
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class SessionBeforeCompactResult:
+    cancel: bool = False
+    summary: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class SessionCompactEvent:
+    compaction_entry: object
+    reason: Literal["manual", "threshold", "overflow"]
+    will_retry: bool
+    from_extension: bool = False
+    type: Literal["session_compact"] = field(default="session_compact", init=False)
+
+
+@dataclass(frozen=True, slots=True)
+class SessionBeforeTreeEvent:
+    target_id: str
+    old_leaf_id: str | None
+    entries_to_summarize: Sequence[object]
+    user_wants_summary: bool
+    custom_instructions: str | None = None
+    replace_instructions: bool = False
+    type: Literal["session_before_tree"] = field(default="session_before_tree", init=False)
+
+
+@dataclass(frozen=True, slots=True)
+class SessionBeforeTreeResult:
+    cancel: bool = False
+    summary: str | None = None
+    custom_instructions: str | None = None
+    replace_instructions: bool | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class SessionTreeEvent:
+    new_leaf_id: str | None
+    old_leaf_id: str | None
+    summary_entry: object | None = None
+    from_extension: bool = False
+    type: Literal["session_tree"] = field(default="session_tree", init=False)
+
+
+@dataclass(frozen=True, slots=True)
+class BeforeProviderRequestEvent:
+    payload: object
+    type: Literal["before_provider_request"] = field(
+        default="before_provider_request", init=False
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class BeforeProviderHeadersEvent:
+    headers: dict[str, str | None]
+    type: Literal["before_provider_headers"] = field(
+        default="before_provider_headers", init=False
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class AfterProviderResponseEvent:
+    status: int
+    headers: Mapping[str, str]
+    type: Literal["after_provider_response"] = field(
+        default="after_provider_response", init=False
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -442,6 +631,7 @@ class InputEvent:
     text: str
     source: Literal["interactive", "extension"] = "interactive"
     streaming_behavior: Literal["steer", "follow_up"] | None = None
+    type: Literal["input"] = field(default="input", init=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -462,13 +652,14 @@ class InputHookResult:
 class ToolCallHookEvent:
     """Payload for the `tool_call` hook, before a tool executes.
 
-    Carries no tool-call id: the hook runs inside the tool executor seam,
-    which the agent loop invokes without the id. Use the observation events
-    (`tool_execution_start`/`tool_execution_end`) for id correlation.
+    Pi exposes the stable call id so policy hooks and lifecycle observations
+    can be correlated without guessing from tool name or order.
     """
 
+    tool_call_id: str
     tool_name: str
     arguments: Mapping[str, JSONValue]
+    type: Literal["tool_call"] = field(default="tool_call", init=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -482,6 +673,7 @@ class ToolCallHookResult:
 
     block: bool = False
     reason: str | None = None
+    terminate: bool = False
     arguments: Mapping[str, JSONValue] | None = None
 
 
@@ -489,17 +681,23 @@ class ToolCallHookResult:
 class ToolResultHookEvent:
     """Payload for the `tool_result` hook, after a tool executes."""
 
+    tool_call_id: str
     tool_name: str
     arguments: Mapping[str, JSONValue]
     result: AgentToolResult
+    is_error: bool
+    type: Literal["tool_result"] = field(default="tool_result", init=False)
 
 
 @dataclass(frozen=True, slots=True)
 class ToolResultHookResult:
     """Result of a `tool_result` hook handler; set fields to override."""
 
-    content: str | None = None
-    details: dict[str, JSONValue] | None = None
+    content: str | list[TextContent | ImageContent] | None = None
+    details: JSONValue = None
+    is_error: bool | None = None
+    usage: Usage | None = None
+    terminate: bool | None = None
 
 
 ExtensionHandler = Callable[[object, "ExtensionContext"], object | Awaitable[object]]

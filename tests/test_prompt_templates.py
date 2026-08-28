@@ -48,7 +48,7 @@ def test_load_prompt_templates_includes_agents_directories(tmp_path: Path) -> No
     assert [template.name for template in templates] == ["project", "user"]
 
 
-def test_project_prompt_template_overrides_user_template(tmp_path: Path) -> None:
+def test_first_prompt_template_wins(tmp_path: Path) -> None:
     tau_home = tmp_path / "home" / ".tau"
     agents_home = tmp_path / "home" / ".agents"
     cwd = tmp_path / "project"
@@ -62,8 +62,8 @@ def test_project_prompt_template_overrides_user_template(tmp_path: Path) -> None
     )
 
     assert len(templates) == 1
-    assert templates[0].path == cwd / ".agents" / "prompts" / "review.md"
-    assert templates[0].content == "Project review"
+    assert templates[0].path == agents_home / "prompts" / "review.md"
+    assert templates[0].content == "User review"
 
 
 def test_load_prompt_templates_with_diagnostics_reports_overrides(tmp_path: Path) -> None:
@@ -83,11 +83,11 @@ def test_load_prompt_templates_with_diagnostics_reports_overrides(tmp_path: Path
     )
 
     assert [template.name for template in templates] == ["review"]
-    assert templates[0].path == cwd / ".tau" / "prompts" / "review.md"
+    assert templates[0].path == tau_home / "prompts" / "review.md"
     assert len(diagnostics) == 1
     assert diagnostics[0].kind == "prompt"
     assert diagnostics[0].name == "review"
-    assert "overrides lower-precedence resource" in diagnostics[0].message
+    assert "ignored because the first resource wins" in diagnostics[0].message
 
 
 @pytest.mark.parametrize("reserved_name", ["prompts", "skills", "tools"])

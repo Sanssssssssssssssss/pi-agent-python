@@ -45,16 +45,26 @@ from tau_ai.content import (
     NON_VISION_USER_IMAGE_PLACEHOLDER,
     messages_have_images,
     text_and_images,
+    transform_messages,
 )
 from tau_ai.env import OpenAICompatibleConfig
 from tau_ai.events import AssistantMessageEvent
 from tau_ai.http import create_async_client
 from tau_ai.http_errors import provider_http_error_message
 from tau_ai.openai_cache import is_direct_openai_url, openai_prompt_cache_key
-from tau_ai.provider import CancellationToken
+from tau_ai.provider import (
+    CancellationToken,
+    apply_provider_headers,
+    apply_provider_payload,
+    emit_provider_response,
+)
 from tau_ai.retry import provider_retry_event, retry_delay_seconds, wait_for_retry
 from tau_ai.stream import canonicalize_provider_stream
-from tau_ai.tool_call_ids import portable_tool_call_id
+from tau_ai.tool_call_ids import (
+    normalize_portable_tool_call_id,
+    portable_tool_call_id,
+    responses_tool_call_id,
+)
 
 # Models that reject function tools + reasoning_effort on /chat/completions and
 # must use the /v1/responses endpoint instead.
@@ -174,6 +184,8 @@ class OpenAICompatibleProvider:
             include_reasoning_effort_none=self._config.include_reasoning_effort_none,
             supports_images=self._config.supports_images,
             prompt_cache_key=cache_key,
+            provider=self._config.provider_name,
+            api=self._config.api,
         )
         return self._stream(
             model=model,
@@ -208,6 +220,8 @@ class OpenAICompatibleProvider:
             max_tokens=self._config.max_tokens,
             supports_images=self._config.supports_images,
             prompt_cache_key=cache_key,
+            provider=self._config.provider_name,
+            api=self._config.api,
         )
         return self._stream(
             model=model,
@@ -242,6 +256,9 @@ class OpenAICompatibleProvider:
 
         async def iterator() -> AsyncIterator[ProviderEvent]:
             client = self._get_client()
+            request_payload = await apply_provider_payload(
+                self._config.provider_hooks, payload
+            )
             api_key = self._config.api_key
             request_url = url
             headers = dict(self._config.headers or {})
@@ -263,14 +280,20 @@ class OpenAICompatibleProvider:
                 if not has_authorization:
                     headers["Authorization"] = f"Bearer {api_key}"
             _apply_session_affinity_headers(headers, session_id, session_affinity_format)
+            headers = await apply_provider_headers(self._config.provider_hooks, headers)
 
             attempt = 0
             while True:
                 parser = parser_factory()
                 try:
                     async with client.stream(
-                        "POST", request_url, json=payload, headers=headers
+                        "POST", request_url, json=request_payload, headers=headers
                     ) as response:
+                        await emit_provider_response(
+                            self._config.provider_hooks,
+                            response.status_code,
+                            response.headers,
+                        )
                         response_provider = _response_header_value(
                             response,
                             self._config.response_provider_header,
@@ -477,6 +500,7 @@ class _ChatStreamParser:
         self._thinking_parts: list[str] = []
         self._thinking_signature: str | None = None
         self._tool_call_builders: dict[int, _ToolCallBuilder] = {}
+        self._pending_reasoning_details: dict[str, str] = {}
         self._finish_reason: str | None = None
         self._usage: Usage | None = None
 
@@ -531,6 +555,29 @@ class _ChatStreamParser:
             index = int(tool_call_delta.get("index", 0))
             builder = self._tool_call_builders.setdefault(index, _ToolCallBuilder())
             builder.add_delta(tool_call_delta)
+            if builder.id:
+                builder.thought_signature = self._pending_reasoning_details.pop(
+                    builder.id, builder.thought_signature
+                )
+
+        reasoning_details = delta.get("reasoning_details")
+        if isinstance(reasoning_details, list):
+            for detail in reasoning_details:
+                if not _is_encrypted_reasoning_detail(detail):
+                    continue
+                serialized = dumps(detail, separators=(",", ":"))
+                matching = next(
+                    (
+                        builder
+                        for builder in self._tool_call_builders.values()
+                        if builder.id == detail["id"]
+                    ),
+                    None,
+                )
+                if matching is not None:
+                    matching.thought_signature = serialized
+                else:
+                    self._pending_reasoning_details[detail["id"]] = serialized
 
         return events, False
 
@@ -699,6 +746,7 @@ class _ToolCallBuilder:
         self.id = ""
         self.name = ""
         self.arguments_parts: list[str] = []
+        self.thought_signature: str | None = None
 
     def add_delta(self, delta: Mapping[str, Any]) -> None:
         call_id = delta.get("id")
@@ -727,6 +775,7 @@ class _ToolCallBuilder:
             id=self.id or f"tool-call-{index}",
             name=self.name,
             arguments=arguments,
+            thought_signature=self.thought_signature,
         )
 
 
@@ -798,8 +847,18 @@ def _build_chat_payload(
     include_reasoning_effort_none: bool = False,
     supports_images: bool = False,
     prompt_cache_key: str | None = None,
+    provider: str = "OpenAI-compatible provider",
+    api: str = "openai-completions",
 ) -> dict[str, JSONValue]:
     resolved_compat = dict(compat or {})
+    messages = transform_messages(
+        messages,
+        model=model,
+        provider=provider,
+        api=api,
+        supports_images=supports_images,
+        normalize_tool_call_id=normalize_portable_tool_call_id,
+    )
     supports_store = bool(resolved_compat.get("supportsStore", True))
     supports_usage = bool(resolved_compat.get("supportsUsageInStreaming", True))
     supports_reasoning_effort = bool(resolved_compat.get("supportsReasoningEffort", True))
@@ -811,7 +870,13 @@ def _build_chat_payload(
         "stream": True,
         "messages": [
             _system_message(system),
-            *_messages_to_openai_chat(messages, supports_images=supports_images),
+            *_messages_to_openai_chat(
+                messages,
+                supports_images=supports_images,
+                requires_reasoning_content=(
+                    resolved_compat.get("requiresReasoningContentOnAssistantMessages") is True
+                ),
+            ),
         ],
     }
     if prompt_cache_key is not None:
@@ -893,7 +958,22 @@ def _build_responses_payload(
     max_tokens: int | None = None,
     supports_images: bool = False,
     prompt_cache_key: str | None = None,
+    provider: str = "OpenAI-compatible provider",
+    api: str = "openai-responses",
 ) -> dict[str, JSONValue]:
+    messages = transform_messages(
+        messages,
+        model=model,
+        provider=provider,
+        api=api,
+        supports_images=supports_images,
+        normalize_tool_call_id=lambda value, source: responses_tool_call_id(
+            value,
+            source,
+            target_provider=provider,
+            target_api=api,
+        ),
+    )
     payload: dict[str, JSONValue] = {
         "model": model,
         "stream": True,
@@ -902,7 +982,13 @@ def _build_responses_payload(
         # path usable for zero-data-retention orgs, which reject ``store: true``.
         "store": False,
         "instructions": system,
-        "input": _messages_to_responses_input(messages, supports_images=supports_images),
+        "input": _messages_to_responses_input(
+            messages,
+            model=model,
+            provider=provider,
+            api=api,
+            supports_images=supports_images,
+        ),
     }
     if prompt_cache_key is not None:
         payload["prompt_cache_key"] = prompt_cache_key
@@ -930,7 +1016,12 @@ def _normalize_responses_effort(reasoning_effort: str | None) -> str | None:
 
 
 def _messages_to_responses_input(
-    messages: list[AgentMessage], *, supports_images: bool = False
+    messages: list[AgentMessage],
+    *,
+    model: str,
+    provider: str,
+    api: str,
+    supports_images: bool = False,
 ) -> list[JSONValue]:
     items: list[JSONValue] = []
     for message in messages:
@@ -949,6 +1040,8 @@ def _messages_to_responses_input(
             else:
                 items.append({"role": "user", "content": text})
         elif isinstance(message, AssistantMessage):
+            same_provider_and_api = message.provider == provider and message.api == api
+            different_model = same_provider_and_api and message.model != model
             for block in message.content:
                 if isinstance(block, ThinkingContent) and block.thinking_signature:
                     try:
@@ -960,15 +1053,22 @@ def _messages_to_responses_input(
             if message.text:
                 items.append({"role": "assistant", "content": message.text})
             for tool_call in message.tool_calls:
+                call_id, item_id = _split_responses_tool_call_id(tool_call.id)
+                if different_model and item_id is not None and item_id.startswith("fc_"):
+                    item_id = None
+                item: dict[str, JSONValue] = {
+                    "type": "function_call",
+                    "call_id": call_id,
+                    "name": tool_call.name,
+                    "arguments": dumps(tool_call.arguments),
+                }
+                if item_id is not None and item_id.startswith("fc_"):
+                    item["id"] = item_id
                 items.append(
-                    {
-                        "type": "function_call",
-                        "call_id": portable_tool_call_id(tool_call.id),
-                        "name": tool_call.name,
-                        "arguments": dumps(tool_call.arguments),
-                    }
+                    item
                 )
         elif isinstance(message, ToolResultMessage):
+            call_id, _item_id = _split_responses_tool_call_id(message.tool_call_id)
             text, images = text_and_images(
                 message.content,
                 supports_images=supports_images,
@@ -986,11 +1086,18 @@ def _messages_to_responses_input(
             items.append(
                 {
                     "type": "function_call_output",
-                    "call_id": portable_tool_call_id(message.tool_call_id),
+                    "call_id": call_id,
                     "output": output,
                 }
             )
     return items
+
+
+def _split_responses_tool_call_id(value: str) -> tuple[str, str | None]:
+    if "|" not in value:
+        return value, None
+    call_id, item_id = value.split("|", 1)
+    return call_id, item_id or None
 
 
 def _openai_input_image(image: ImageContent) -> dict[str, JSONValue]:
@@ -1121,7 +1228,7 @@ def _system_message(system: str) -> dict[str, JSONValue]:
 
 
 def _messages_to_openai_chat(
-    messages: list[AgentMessage], *, supports_images: bool
+    messages: list[AgentMessage], *, supports_images: bool, requires_reasoning_content: bool
 ) -> list[dict[str, JSONValue]]:
     converted: list[dict[str, JSONValue]] = []
     pending_tool_images: list[ImageContent] = []
@@ -1166,7 +1273,12 @@ def _messages_to_openai_chat(
             )
             pending_tool_images.extend(images)
             continue
-        converted.append(_message_to_openai(message))
+        converted_message = _message_to_openai(
+            message,
+            requires_reasoning_content=requires_reasoning_content,
+        )
+        if converted_message is not None:
+            converted.append(converted_message)
     if pending_tool_images:
         converted.append(_openai_tool_image_message(pending_tool_images))
     return converted
@@ -1184,21 +1296,43 @@ def _openai_tool_image_message(images: list[ImageContent]) -> dict[str, JSONValu
     return {"role": "user", "content": content}
 
 
-def _message_to_openai(message: AgentMessage) -> dict[str, JSONValue]:
+def _message_to_openai(
+    message: AgentMessage, *, requires_reasoning_content: bool = False
+) -> dict[str, JSONValue] | None:
     if isinstance(message, UserMessage):
         return {"role": "user", "content": message.text}
 
     if isinstance(message, AssistantMessage):
         item: dict[str, JSONValue] = {"role": "assistant", "content": message.text}
-        thinking = [block for block in message.content if isinstance(block, ThinkingContent)]
+        thinking = [
+            block
+            for block in message.content
+            if isinstance(block, ThinkingContent) and block.thinking.strip()
+        ]
         if thinking:
             signature = thinking[0].thinking_signature or "reasoning_content"
-            if signature in {"reasoning_content", "reasoning", "thinking"}:
-                item[signature] = "".join(block.thinking for block in thinking)
+            if signature in {"reasoning_content", "reasoning", "reasoning_text", "thinking"}:
+                item[signature] = "\n".join(block.thinking for block in thinking)
         if message.tool_calls:
             item["tool_calls"] = [
                 _tool_call_to_openai(tool_call) for tool_call in message.tool_calls
             ]
+            reasoning_details = []
+            for tool_call in message.tool_calls:
+                if not tool_call.thought_signature:
+                    continue
+                try:
+                    detail = loads(tool_call.thought_signature)
+                except (JSONDecodeError, TypeError):
+                    continue
+                if detail:
+                    reasoning_details.append(detail)
+            if reasoning_details:
+                item["reasoning_details"] = reasoning_details
+        if requires_reasoning_content and "reasoning_content" not in item:
+            item["reasoning_content"] = ""
+        if not item["content"] and "tool_calls" not in item:
+            return None
         return item
 
     if isinstance(message, ToolResultMessage):
@@ -1355,11 +1489,22 @@ def _tool_call_deltas(delta: Mapping[str, Any]) -> list[Mapping[str, Any]]:
 
 
 def _thinking_delta(delta: Mapping[str, Any]) -> tuple[str, str] | None:
-    for field_name in ("reasoning_content", "reasoning", "thinking"):
+    for field_name in ("reasoning_content", "reasoning", "reasoning_text"):
         value = delta.get(field_name)
         if isinstance(value, str) and value:
             return field_name, value
     return None
+
+
+def _is_encrypted_reasoning_detail(detail: object) -> bool:
+    return (
+        isinstance(detail, Mapping)
+        and detail.get("type") == "reasoning.encrypted"
+        and isinstance(detail.get("id"), str)
+        and bool(detail["id"])
+        and isinstance(detail.get("data"), str)
+        and bool(detail["data"])
+    )
 
 
 def _is_transient_status(status_code: int) -> bool:

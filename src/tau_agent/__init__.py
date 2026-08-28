@@ -22,7 +22,17 @@ from tau_agent.harness import (
     QueuedMessages,
     SimpleCancellationToken,
 )
-from tau_agent.loop import run_agent_loop
+from tau_agent.loop import (
+    AfterToolCallContext,
+    AfterToolCallResult,
+    AgentContext,
+    AgentLoopTurnUpdate,
+    BeforeToolCallContext,
+    BeforeToolCallResult,
+    TurnContext,
+    run_agent_loop,
+)
+from tau_agent.mcp import McpToolSet
 from tau_agent.messages import (
     AgentMessage,
     AssistantMessage,

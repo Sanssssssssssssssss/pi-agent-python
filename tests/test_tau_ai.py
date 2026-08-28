@@ -213,6 +213,61 @@ async def test_openai_compatible_provider_formats_request_and_streams_text() -> 
 
 
 @pytest.mark.anyio
+async def test_openai_provider_hooks_observe_real_transport_boundaries() -> None:
+    observed: list[object] = []
+
+    class Hooks:
+        async def before_provider_request(self, payload: object) -> object:
+            assert isinstance(payload, dict)
+            observed.append("payload")
+            return {**payload, "hooked": True}
+
+        async def before_provider_headers(
+            self, headers: dict[str, str | None]
+        ) -> dict[str, str | None]:
+            observed.append("headers")
+            headers["X-Hook"] = "yes"
+            return headers
+
+        async def after_provider_response(
+            self, status: int, headers: Mapping[str, str]
+        ) -> None:
+            observed.append((status, headers.get("x-result")))
+
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            text='data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n',
+            headers={"content-type": "text/event-stream", "x-result": "ok"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = OpenAICompatibleProvider(
+            OpenAICompatibleConfig(
+                api_key="test-key",
+                base_url="https://example.test/v1",
+                provider_hooks=Hooks(),
+            ),
+            client=client,
+        )
+        await _collect(
+            provider.stream_response(
+                model="test-model",
+                system="system",
+                messages=[UserMessage(content="go")],
+                tools=[],
+            )
+        )
+
+    assert observed == ["payload", "headers", (200, "ok")]
+    assert loads(requests[0].content)["hooked"] is True
+    assert requests[0].headers["x-hook"] == "yes"
+
+
+@pytest.mark.anyio
 async def test_openai_compatible_provider_uses_wire_model_alias_but_reports_logical_model() -> None:
     requests: list[httpx.Request] = []
 
@@ -993,7 +1048,10 @@ async def test_openai_compatible_provider_replays_persisted_reasoning() -> None:
         content=[
             ThinkingContent(thinking="prior plan", thinking_signature="reasoning_content"),
             TextContent(text="prior answer"),
-        ]
+        ],
+        api="openai-completions",
+        provider="OpenAI-compatible provider",
+        model="test-model",
     )
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         provider = OpenAICompatibleProvider(
@@ -1013,6 +1071,123 @@ async def test_openai_compatible_provider_replays_persisted_reasoning() -> None:
     replay = payload["messages"][-1]
     assert replay["content"] == "prior answer"
     assert replay["reasoning_content"] == "prior plan"
+
+
+@pytest.mark.anyio
+async def test_openai_compatible_replays_reasoning_text_and_encrypted_tool_detail() -> None:
+    encrypted = {"type": "reasoning.encrypted", "id": "call-1", "data": "opaque"}
+
+    def first_handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            text=(
+                'data: {"choices":[{"delta":{"reasoning_text":"plan",'
+                '"tool_calls":[{"index":0,"id":"call-1","function":{"name":"read",'
+                '"arguments":"{\\"path\\":\\"a.py\\"}"}}],'
+                '"reasoning_details":[{"type":"reasoning.encrypted","id":"call-1",'
+                '"data":"opaque"}]},"finish_reason":"tool_calls"}]}\n\n'
+                "data: [DONE]\n\n"
+            ),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(first_handler)) as client:
+        provider = OpenAICompatibleProvider(
+            OpenAICompatibleConfig(api_key="test-key", base_url="https://example.test/v1"),
+            client=client,
+        )
+        events = await _collect(
+            provider.stream_response(
+                model="test-model",
+                system="You are Tau.",
+                messages=[UserMessage(content="read")],
+                tools=[],
+            )
+        )
+
+    prior = events[-1].message
+    assert isinstance(prior, AssistantMessage)
+    thinking = next(block for block in prior.content if isinstance(block, ThinkingContent))
+    assert thinking.thinking_signature == "reasoning_text"
+    assert prior.tool_calls[0].thought_signature is not None
+    assert loads(prior.tool_calls[0].thought_signature) == encrypted
+
+    requests: list[httpx.Request] = []
+
+    def replay_handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            text=(
+                'data: {"choices":[{"delta":{"content":"done"},"finish_reason":"stop"}]}\n\n'
+                "data: [DONE]\n\n"
+            ),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(replay_handler)) as client:
+        provider = OpenAICompatibleProvider(
+            OpenAICompatibleConfig(api_key="test-key", base_url="https://example.test/v1"),
+            client=client,
+        )
+        await _collect(
+            provider.stream_response(
+                model="test-model",
+                system="You are Tau.",
+                messages=[
+                    UserMessage(content="read"),
+                    prior,
+                    ToolResultMessage(tool_call_id="call-1", tool_name="read", content="contents"),
+                ],
+                tools=[],
+            )
+        )
+
+    replay = loads(requests[0].content)["messages"][2]
+    assert replay["reasoning_text"] == "plan"
+    assert replay["reasoning_details"] == [encrypted]
+
+
+@pytest.mark.anyio
+async def test_deepseek_compat_replays_empty_reasoning_content_when_required() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            text=(
+                'data: {"choices":[{"delta":{"content":"next"},"finish_reason":"stop"}]}\n\n'
+                "data: [DONE]\n\n"
+            ),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = OpenAICompatibleProvider(
+            OpenAICompatibleConfig(
+                api_key="test-key",
+                base_url="https://api.deepseek.com/v1",
+                compat={"requiresReasoningContentOnAssistantMessages": True},
+            ),
+            client=client,
+        )
+        await _collect(
+            provider.stream_response(
+                model="deepseek-reasoner",
+                system="You are Tau.",
+                messages=[
+                    UserMessage(content="first"),
+                    AssistantMessage(content="prior answer"),
+                    UserMessage(content="next"),
+                ],
+                tools=[],
+            )
+        )
+
+    replay = loads(requests[0].content)["messages"][2]
+    assert replay["content"] == "prior answer"
+    assert replay["reasoning_content"] == ""
 
 
 @pytest.mark.anyio

@@ -259,7 +259,7 @@ def test_first_request_marks_only_its_own_tail() -> None:
 
 
 def test_boundary_skips_back_over_a_retained_failed_turn() -> None:
-    """Consecutive assistants leave no user message at the true boundary."""
+    """Pi's provider transform drops the failed assistant before cache marking."""
     messages = [
         UserMessage(content="first"),
         AssistantMessage(content=[TextContent(text="partial")], stop_reason="error"),
@@ -268,8 +268,7 @@ def test_boundary_skips_back_over_a_retained_failed_turn() -> None:
     ]
     payload = _payload(messages)
 
-    # Index 0 is an older prefix than the true boundary, which costs nothing.
-    assert _marked_message_indexes(payload) == [0, 3]
+    assert _marked_message_indexes(payload) == [0, 2]
 
 
 def test_image_tail_is_marked_on_the_image_block() -> None:

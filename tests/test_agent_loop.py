@@ -407,7 +407,7 @@ async def test_agent_loop_repairs_malformed_tool_history_before_provider_call() 
     assert repair.tool_call_id == "call-1"
     assert repair.is_error is True
     assert replayed[2] is late_user
-    assert orphan not in replayed
+    assert orphan in replayed
     assert orphan in messages
 
 

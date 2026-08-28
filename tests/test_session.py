@@ -5,6 +5,9 @@ import pytest
 
 from tau_agent import (
     AssistantMessage,
+    BashExecutionMessage,
+    BranchSummaryMessage,
+    CompactionSummaryMessage,
     CustomMessage,
     ImageContent,
     ResponseTiming,
@@ -13,6 +16,7 @@ from tau_agent import (
     ToolResultMessage,
     UserMessage,
 )
+from tau_agent.messages import convert_to_llm
 from tau_agent.session import (
     BranchSummaryEntry,
     CompactionEntry,
@@ -312,11 +316,11 @@ def test_session_state_replays_linear_entries() -> None:
     assistant = AssistantMessage(content="Hello", timestamp=2)
     entries = [
         MessageEntry(id="user", message=user),
-        ModelChangeEntry(id="model", model="fake-model"),
-        MessageEntry(id="assistant", message=assistant),
-        LabelEntry(id="label", label="Greeting"),
-        CustomEntry(id="custom", namespace="test", data={"ok": True}),
-        LeafEntry(id="leaf", entry_id="assistant"),
+        ModelChangeEntry(id="model", parent_id="user", model="fake-model"),
+        MessageEntry(id="assistant", parent_id="model", message=assistant),
+        LabelEntry(id="label", parent_id="assistant", label="Greeting"),
+        CustomEntry(id="custom", parent_id="label", namespace="test", data={"ok": True}),
+        LeafEntry(id="leaf", parent_id="custom", entry_id="assistant"),
     ]
 
     state = SessionState.from_entries(entries)
@@ -330,20 +334,110 @@ def test_session_state_replays_linear_entries() -> None:
 def test_session_state_applies_compaction_and_branch_summary() -> None:
     entries = [
         MessageEntry(id="user", message=UserMessage(content="Explain sessions.")),
-        MessageEntry(id="assistant", message=AssistantMessage(content="They are trees.")),
+        MessageEntry(
+            id="assistant",
+            parent_id="user",
+            message=AssistantMessage(content="They are trees."),
+        ),
         CompactionEntry(
             id="compact",
+            parent_id="assistant",
             summary="The user asked about sessions.",
             replaces_entry_ids=["user", "assistant"],
         ),
-        BranchSummaryEntry(id="branch", summary="A side branch explored storage."),
+        BranchSummaryEntry(
+            id="branch",
+            parent_id="compact",
+            summary="A side branch explored storage.",
+        ),
     ]
 
     state = SessionState.from_entries(entries)
 
-    assert [message.role for message in state.messages] == ["user", "user"]
-    assert "The user asked about sessions." in state.messages[0].text
-    assert "A side branch explored storage." in state.messages[1].text
+    assert isinstance(state.messages[0], CompactionSummaryMessage)
+    assert isinstance(state.messages[1], BranchSummaryMessage)
+    assert "The user asked about sessions." in state.messages[0].summary
+    assert "A side branch explored storage." in state.messages[1].summary
+
+
+def test_session_state_uses_latest_compaction_and_first_kept_boundary() -> None:
+    entries = [
+        MessageEntry(id="1", message=UserMessage(content="a")),
+        MessageEntry(id="2", parent_id="1", message=AssistantMessage(content="b")),
+        CompactionEntry(
+            id="3",
+            parent_id="2",
+            summary="first",
+            first_kept_entry_id="1",
+        ),
+        MessageEntry(id="4", parent_id="3", message=UserMessage(content="c")),
+        MessageEntry(id="5", parent_id="4", message=AssistantMessage(content="d")),
+        CompactionEntry(
+            id="6",
+            parent_id="5",
+            summary="second",
+            first_kept_entry_id="4",
+        ),
+        MessageEntry(id="7", parent_id="6", message=UserMessage(content="e")),
+    ]
+
+    state = SessionState.from_entries(entries)
+
+    assert state.context_entry_ids == ("6", "4", "5", "7")
+    assert [message.role for message in state.messages] == [
+        "compactionSummary",
+        "user",
+        "assistant",
+        "user",
+    ]
+    assert isinstance(state.messages[0], CompactionSummaryMessage)
+    assert state.messages[0].summary == "second"
+
+
+def test_session_state_follows_selected_branch_with_pi_fallbacks() -> None:
+    root = MessageEntry(id="1", message=UserMessage(content="root"))
+    shared = MessageEntry(id="2", parent_id="1", message=AssistantMessage(content="shared"))
+    left = MessageEntry(id="3", parent_id="2", message=UserMessage(content="left"))
+    right = MessageEntry(id="4", parent_id="2", message=UserMessage(content="right"))
+    orphan = MessageEntry(id="5", parent_id="missing", message=UserMessage(content="orphan"))
+    entries = [root, shared, left, right, orphan]
+
+    assert [
+        message.text for message in SessionState.from_entries(entries, leaf_id="3").messages
+    ] == [
+        "root",
+        "shared",
+        "left",
+    ]
+    assert [
+        message.text
+        for message in SessionState.from_entries(entries, leaf_id="nonexistent").messages
+    ] == ["orphan"]
+    assert [
+        message.text for message in SessionState.from_entries(entries, leaf_id="5").messages
+    ] == ["orphan"]
+
+
+def test_convert_to_llm_matches_pi_coding_message_protocol() -> None:
+    converted = convert_to_llm(
+        [
+            BranchSummaryMessage(summary="branch", from_id="entry"),
+            CompactionSummaryMessage(summary="compact", tokens_before=12),
+            BashExecutionMessage(command="false", output="bad", exit_code=1),
+            BashExecutionMessage(command="secret", output="hidden", exclude_from_context=True),
+        ]
+    )
+
+    assert [message.role for message in converted] == ["user", "user", "user"]
+    assert converted[0].text == (
+        "The following is a summary of a branch that this conversation came back from:\n\n"
+        "<summary>\nbranch\n</summary>"
+    )
+    assert converted[1].text == (
+        "The conversation history before this point was compacted into the following summary:\n\n"
+        "<summary>\ncompact\n</summary>"
+    )
+    assert converted[2].text == "Ran `false`\n```\nbad\n```\n\nCommand exited with code 1"
 
 
 def test_path_to_entry_follows_parent_chain() -> None:

@@ -8,7 +8,7 @@ from typing import Literal, Protocol
 
 from pydantic import Field, model_validator
 
-from tau_agent.messages import ImageContent, TextContent, ToolCall, WireModel
+from tau_agent.messages import ImageContent, TextContent, ToolCall, Usage, WireModel
 from tau_agent.types import JSONValue
 
 
@@ -23,6 +23,7 @@ class AgentToolResult(WireModel):
 
     content: list[TextContent | ImageContent] = Field(default_factory=list)
     details: JSONValue = None
+    usage: Usage | None = None
     added_tool_names: list[str] | None = None
     terminate: bool | None = None
 

@@ -42,7 +42,7 @@ def test_valid_tool_history_is_unchanged() -> None:
     }
 
 
-def test_missing_result_gets_synthetic_interruption() -> None:
+def test_missing_result_gets_pi_synthetic_error() -> None:
     call = _call()
 
     repair = repair_tool_history((UserMessage(content="read"), AssistantMessage(content=[call])))
@@ -52,24 +52,24 @@ def test_missing_result_gets_synthetic_interruption() -> None:
     assert isinstance(result, ToolResultMessage)
     assert result.tool_call_id == call.id
     assert result.tool_name == call.name
-    assert result.text == "Tool call interrupted by user"
+    assert result.text == "No result provided"
     assert result.is_error is True
     assert repair.synthesized_results == 1
 
 
-def test_orphan_result_is_dropped_without_inventing_a_call() -> None:
+def test_orphan_result_is_preserved() -> None:
     user = UserMessage(content="continue")
     orphan = _result("call-missing")
 
     repair = repair_tool_history((orphan, user))
 
-    assert repair.changed is True
-    assert repair.messages == (user,)
-    assert repair.dropped_orphan_results == 1
+    assert repair.changed is False
+    assert repair.messages == (orphan, user)
+    assert repair.dropped_orphan_results == 0
     assert repair.synthesized_results == 0
 
 
-def test_late_result_moves_next_to_its_call() -> None:
+def test_late_result_is_not_reordered_across_a_user_message() -> None:
     call = _call()
     assistant = AssistantMessage(content=[call])
     user = UserMessage(content="continue")
@@ -77,12 +77,15 @@ def test_late_result_moves_next_to_its_call() -> None:
 
     repair = repair_tool_history((assistant, user, result))
 
-    assert repair.messages == (assistant, result, user)
+    synthetic = repair.messages[1]
+    assert isinstance(synthetic, ToolResultMessage)
+    assert synthetic.text == "No result provided"
+    assert repair.messages == (assistant, synthetic, user, result)
     assert repair.changed is True
-    assert repair.reordered_results == 1
+    assert repair.reordered_results == 0
 
 
-def test_duplicate_results_prefer_real_output_over_interruption() -> None:
+def test_duplicate_results_keep_input_order() -> None:
     call = _call()
     assistant = AssistantMessage(content=[call])
     interrupted = _result(text="Tool call interrupted by user", is_error=True)
@@ -90,8 +93,8 @@ def test_duplicate_results_prefer_real_output_over_interruption() -> None:
 
     repair = repair_tool_history((assistant, interrupted, actual))
 
-    assert repair.messages == (assistant, actual)
-    assert repair.dropped_duplicate_results == 1
+    assert repair.messages == (assistant, interrupted, actual)
+    assert repair.dropped_duplicate_results == 0
 
 
 def test_repeated_call_ids_keep_one_result_per_turn() -> None:
@@ -120,12 +123,12 @@ def test_repeated_call_id_reserves_later_adjacent_result() -> None:
 
     first_result = repair.messages[1]
     assert isinstance(first_result, ToolResultMessage)
-    assert first_result.text == "Tool call interrupted by user"
+    assert first_result.text == "No result provided"
     assert repair.messages == (first_assistant, first_result, user, second_assistant, second_result)
     assert repair.synthesized_results == 1
 
 
-def test_parallel_results_follow_tool_call_order() -> None:
+def test_parallel_results_keep_input_order() -> None:
     first = _call("call-1", "read")
     second = _call("call-2", "bash")
     assistant = AssistantMessage(content=[first, second])
@@ -134,4 +137,4 @@ def test_parallel_results_follow_tool_call_order() -> None:
 
     repair = repair_tool_history((assistant, second_result, first_result))
 
-    assert repair.messages == (assistant, first_result, second_result)
+    assert repair.messages == (assistant, second_result, first_result)

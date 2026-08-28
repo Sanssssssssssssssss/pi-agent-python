@@ -1,4 +1,3 @@
-from datetime import date
 from pathlib import Path
 
 from tau_agent import AgentTool, AgentToolResult
@@ -25,14 +24,13 @@ async def _unused_executor(
     return AgentToolResult(content="")
 
 
-def test_default_prompt_includes_tools_guidelines_date_and_cwd(tmp_path: Path) -> None:
+def test_default_prompt_includes_tools_guidelines_and_cwd(tmp_path: Path) -> None:
     tools = create_coding_tools(cwd=tmp_path)
 
     prompt = build_system_prompt(
         BuildSystemPromptOptions(
             cwd=tmp_path,
             tools=tools,
-            current_date=date(2026, 6, 17),
         )
     )
 
@@ -41,13 +39,12 @@ def test_default_prompt_includes_tools_guidelines_date_and_cwd(tmp_path: Path) -
     assert "- Use bash for file operations like ls, rg, find" in prompt
     assert "- When using bash, include a brief present-participle description" in prompt
     assert "- Use read to examine files instead of cat or sed." in prompt
-    assert "- Inspect relevant files and project instructions before editing" in prompt
-    assert "- Do not overwrite or discard unrelated user changes" in prompt
-    assert "- Report checks honestly; never claim a command passed unless you ran it" in prompt
+    assert "- Be concise in your responses" in prompt
+    assert "- Show file paths clearly when working with files" in prompt
     assert "Tau documentation (read only when the user asks about Tau itself" in prompt
     assert "custom providers or adding built-in providers/models (docs/models.md)" in prompt
     assert "creating or modifying extensions (docs/extensions.md" in prompt
-    assert prompt.endswith(f"Current date: 2026-06-17\nCurrent working directory: {tmp_path}")
+    assert prompt.endswith(f"Current working directory: {tmp_path.as_posix()}")
 
 
 def test_tool_without_prompt_snippet_is_hidden_from_available_tools() -> None:
@@ -71,7 +68,7 @@ def test_guidelines_are_deduplicated(tmp_path: Path) -> None:
     assert guidelines.count(duplicate) == 1
 
 
-def test_custom_prompt_replaces_default_but_keeps_append_context_and_date(tmp_path: Path) -> None:
+def test_custom_prompt_replaces_default_but_keeps_append_context_and_cwd(tmp_path: Path) -> None:
     prompt = build_system_prompt(
         BuildSystemPromptOptions(
             cwd=tmp_path,
@@ -79,7 +76,6 @@ def test_custom_prompt_replaces_default_but_keeps_append_context_and_date(tmp_pa
             custom_prompt="Custom base.",
             append_system_prompt="Extra rules.",
             context_files=(ProjectContextFile(path="/repo/AGENTS.md", content="Follow rules."),),
-            current_date=date(2026, 6, 17),
         )
     )
 
@@ -88,7 +84,7 @@ def test_custom_prompt_replaces_default_but_keeps_append_context_and_date(tmp_pa
     assert "Tau documentation" not in prompt
     assert '<project_instructions path="/repo/AGENTS.md">' in prompt
     assert "Follow rules." in prompt
-    assert "Current date: 2026-06-17" in prompt
+    assert prompt.endswith(f"Current working directory: {tmp_path.as_posix()}")
 
 
 def test_extra_sections_follow_user_append_in_registration_order(tmp_path: Path) -> None:
@@ -104,7 +100,6 @@ def test_extra_sections_follow_user_append_in_registration_order(tmp_path: Path)
                 PromptSection(title=None, body="Untitled extension context."),
             ),
             context_files=(ProjectContextFile(path="/repo/AGENTS.md", content="Project rules."),),
-            current_date=date(2026, 6, 17),
         )
     )
 
@@ -118,20 +113,19 @@ def test_extra_sections_follow_user_append_in_registration_order(tmp_path: Path)
     assert prompt.index("Untitled extension context.") < prompt.index("<project_instructions")
 
 
-def test_empty_custom_prompt_is_still_custom(tmp_path: Path) -> None:
+def test_empty_custom_prompt_uses_default_prompt_like_pi(tmp_path: Path) -> None:
     prompt = build_system_prompt(
         BuildSystemPromptOptions(
             cwd=tmp_path,
             tools=create_coding_tools(cwd=tmp_path),
             custom_prompt="",
             append_system_prompt="Extra rules.",
-            current_date=date(2026, 6, 17),
         )
     )
 
-    assert prompt.startswith("\n\nExtra rules.")
-    assert "Available tools:" not in prompt
-    assert "Current date: 2026-06-17" in prompt
+    assert "Available tools:" in prompt
+    assert "\n\nExtra rules." in prompt
+    assert prompt.endswith(f"Current working directory: {tmp_path.as_posix()}")
 
 
 def test_skills_are_formatted_as_xml_and_escaped(tmp_path: Path) -> None:

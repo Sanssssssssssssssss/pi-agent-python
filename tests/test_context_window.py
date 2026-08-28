@@ -1,6 +1,14 @@
 from pathlib import Path
 
-from tau_agent import AssistantMessage, TextContent, ToolCall, ToolResultMessage, Usage, UserMessage
+from tau_agent import (
+    AssistantMessage,
+    TextContent,
+    ThinkingContent,
+    ToolCall,
+    ToolResultMessage,
+    Usage,
+    UserMessage,
+)
 from tau_agent.messages import assistant_content
 from tau_coding.context_window import (
     ContextUsageEstimate,
@@ -178,4 +186,26 @@ def test_compaction_summary_prompt_updates_previous_summary() -> None:
     assert "Now add tests." in prompt
     assert "Previous conversation summary" not in serialize_messages_for_compaction(
         (UserMessage(content="Now add tests."),)
+    )
+
+
+def test_compaction_serialization_matches_pi_transcript_shape() -> None:
+    messages = (
+        UserMessage(content="Inspect."),
+        AssistantMessage(
+            content=[
+                ThinkingContent(thinking="Plan first."),
+                TextContent(text="Reading."),
+                ToolCall(id="call", name="read", arguments={"path": "a.py", "line": 2}),
+            ]
+        ),
+        ToolResultMessage(tool_call_id="call", tool_name="read", content="contents"),
+    )
+
+    assert serialize_messages_for_compaction(messages) == (
+        "[User]: Inspect.\n\n"
+        "[Assistant thinking]: Plan first.\n\n"
+        "[Assistant]: Reading.\n\n"
+        '[Assistant tool calls]: read(path="a.py", line=2)\n\n'
+        "[Tool result]: contents"
     )

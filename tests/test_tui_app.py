@@ -5114,7 +5114,7 @@ async def test_tui_app_export_command_runs_session_export() -> None:
         assert notifications == []
         assert app.state.items[-1] == ChatItem(
             role="status",
-            text="/export\nExported session to /workspace/project/session.html",
+            text=f"/export\nExported session to {session.cwd / 'session.html'}",
         )
         assert session.prompt_texts == []
 
@@ -5755,7 +5755,7 @@ async def test_tui_app_completes_resume_session_argument() -> None:
 
         assert app._completion_state.selected is not None
         assert app._completion_state.selected.description == (
-            "Session - fake-model - /workspace/project"
+            f"Session - fake-model - {Path('/workspace/project')}"
         )
 
         await pilot.press("tab")

@@ -22,6 +22,7 @@ from tau_ai.openai_codex import (
     OpenAICodexProvider,
 )
 from tau_ai.openai_compatible import OpenAICompatibleProvider
+from tau_ai.provider import ProviderHooks
 from tau_coding.credentials import FileCredentialStore, OAuthCredential
 from tau_coding.extensions.providers import (
     CredentialReader,
@@ -75,6 +76,7 @@ async def create_dynamic_model_provider(
     model: str,
     credential_store: CredentialReader | None = None,
     environment: Mapping[str, str] | None = None,
+    provider_hooks: ProviderHooks | None = None,
 ) -> ClosableModelProvider:
     """Create a candidate runtime from a process-local provider definition.
 
@@ -151,6 +153,7 @@ async def create_dynamic_model_provider(
         # Dynamic providers explicitly own their API choice. A local model id
         # resembling gpt-* or *codex* must not reroute to /responses.
         infer_api_from_model=False,
+        provider_hooks=provider_hooks,
     )
     return OpenAICompatibleProvider(config, client=transport.client)
 
@@ -215,6 +218,7 @@ def create_model_provider(
     thinking_level: ThinkingLevel | None = None,
     inference_provider: str | None = None,
     response_headers_observer: Callable[[Mapping[str, str]], None] | None = None,
+    provider_hooks: ProviderHooks | None = None,
 ) -> ClosableModelProvider:
     """Create a runtime model provider from durable provider settings."""
     if model is not None:
@@ -234,6 +238,7 @@ def create_model_provider(
             model=model,
             thinking_level=thinking_level,
         )
+        config = replace(config, provider_hooks=provider_hooks)
         if credential is not None:
             runtime_auth = _required_oauth_provider(provider.name).runtime_auth(credential)
             oauth_retention, _ = anthropic_cache_settings(provider, model, oauth=True)
@@ -269,6 +274,7 @@ def create_model_provider(
                     thinking_level=thinking_level,
                 ),
                 supports_images=provider_model_supports_images(provider, model),
+                provider_hooks=provider_hooks,
             )
         )
     if isinstance(provider, OpenAICompatibleProviderConfig):
@@ -279,6 +285,7 @@ def create_model_provider(
             model=model,
             thinking_level=thinking_level,
         )
+        compatible_config = replace(compatible_config, provider_hooks=provider_hooks)
         if inference_provider is not None and model is not None:
             compatible_config = replace(
                 compatible_config,
@@ -329,6 +336,7 @@ def create_model_provider(
                 # proxying real Claude can opt back in per provider or per model.
                 cache_retention=gateway_retention,
                 cache_control_on_tools=gateway_cache_control_on_tools,
+                provider_hooks=provider_hooks,
             )
             return AnthropicProvider(anthropic_config)
         if selected_api == "google-generative-ai":

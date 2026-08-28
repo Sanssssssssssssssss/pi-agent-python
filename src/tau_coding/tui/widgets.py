@@ -2566,7 +2566,7 @@ def _context_file_label(path: Path, *, cwd: Path) -> str:
     if not expanded_path.is_absolute():
         expanded_path = cwd / expanded_path
     try:
-        return str(expanded_path.resolve().relative_to(cwd.expanduser().resolve()))
+        return expanded_path.resolve().relative_to(cwd.expanduser().resolve()).as_posix()
     except (OSError, ValueError):
         try:
             absolute_path = expanded_path.resolve()
@@ -2866,6 +2866,6 @@ def _bullet_list(
 def _short_path(path: Path) -> str:
     home = Path.home()
     try:
-        return f"~/{path.relative_to(home)}"
+        return f"~/{path.relative_to(home).as_posix()}"
     except ValueError:
-        return str(path)
+        return path.as_posix()

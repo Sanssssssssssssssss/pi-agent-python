@@ -5,15 +5,18 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Final, cast
 
-from tau_agent.messages import AgentMessage, UserMessage
+from tau_agent.messages import (
+    AgentMessage,
+    AssistantMessage,
+    BranchSummaryMessage,
+    CompactionSummaryMessage,
+)
 from tau_agent.session.entries import (
-    BranchSummaryEntry,
     CompactionEntry,
     CustomEntry,
     SessionEntry,
     SessionInfoEntry,
 )
-from tau_agent.session.tree import path_to_entry
 
 _UNSET_LEAF_ID: Final[object] = object()
 
@@ -47,14 +50,11 @@ class SessionState:
         ``None`` explicitly replays the empty path before the first root entry.
         Without it, entries are replayed linearly in storage order.
         """
-        replay_all = leaf_id is _UNSET_LEAF_ID
-        resolved_leaf_id = None if replay_all else cast(str | None, leaf_id)
-        replay_entries = (
-            entries
-            if replay_all
-            else path_to_entry(entries, resolved_leaf_id)
-            if resolved_leaf_id is not None
-            else []
+        resolved_leaf_id = None if leaf_id is _UNSET_LEAF_ID else cast(str | None, leaf_id)
+        replay_entries = _build_session_path(
+            entries,
+            leaf_id=resolved_leaf_id,
+            explicit_leaf=leaf_id is not _UNSET_LEAF_ID,
         )
 
         message_rows: list[tuple[str, AgentMessage]] = []
@@ -62,15 +62,17 @@ class SessionState:
         provider: str | None = None
         thinking_level: str | None = None
         label: str | None = None
-        active_leaf_id: str | None = resolved_leaf_id
+        active_leaf_id = (
+            resolved_leaf_id
+            if leaf_id is not _UNSET_LEAF_ID
+            else (replay_entries[-1].id if replay_entries else None)
+        )
         session_info: SessionInfoEntry | None = None
         custom_entries: list[CustomEntry] = []
         compaction_entries: list[CompactionEntry] = []
 
         for entry in replay_entries:
             match entry.type:
-                case "message":
-                    message_rows.append((entry.id, entry.message))
                 case "model_change":
                     model = entry.model
                     if entry.provider is not None:
@@ -87,10 +89,37 @@ class SessionState:
                     custom_entries.append(entry)
                 case "compaction":
                     compaction_entries.append(entry)
-                    message_rows = _apply_compaction(message_rows, entry)
+
+        for entry in _build_context_entries(replay_entries):
+            match entry.type:
+                case "message":
+                    message_rows.append((entry.id, entry.message))
+                    if isinstance(entry.message, AssistantMessage):
+                        if entry.message.model != "unknown":
+                            model = entry.message.model
+                        if entry.message.provider != "unknown":
+                            provider = entry.message.provider
+                case "compaction":
+                    message_rows.append(
+                        (
+                            entry.id,
+                            CompactionSummaryMessage(
+                                summary=entry.summary,
+                                tokens_before=entry.tokens_before,
+                                timestamp=int(entry.timestamp * 1000),
+                            ),
+                        )
+                    )
                 case "branch_summary":
                     message_rows.append(
-                        (entry.id, UserMessage(content=_format_branch_summary(entry)))
+                        (
+                            entry.id,
+                            BranchSummaryMessage(
+                                summary=entry.summary,
+                                from_id=entry.branch_root_id or entry.parent_id or "root",
+                                timestamp=int(entry.timestamp * 1000),
+                            ),
+                        )
                     )
 
         return cls(
@@ -108,34 +137,43 @@ class SessionState:
         )
 
 
-def _apply_compaction(
-    message_rows: list[tuple[str, AgentMessage]],
-    entry: CompactionEntry,
-) -> list[tuple[str, AgentMessage]]:
-    replaced_ids = set(entry.replaces_entry_ids)
-    retained: list[tuple[str, AgentMessage]] = []
-    inserted_summary = False
-    for entry_id, message in message_rows:
-        if entry_id not in replaced_ids:
-            retained.append((entry_id, message))
-            continue
-        if not inserted_summary:
-            retained.append(
-                (entry.id, UserMessage(content=_format_compaction_summary(entry.summary)))
-            )
-            inserted_summary = True
-
-    if not inserted_summary:
-        retained.append((entry.id, UserMessage(content=_format_compaction_summary(entry.summary))))
-    return retained
+def _build_session_path(
+    entries: list[SessionEntry], *, leaf_id: str | None, explicit_leaf: bool
+) -> list[SessionEntry]:
+    if explicit_leaf and leaf_id is None:
+        return []
+    by_id = {entry.id: entry for entry in entries}
+    leaf = by_id.get(leaf_id) if leaf_id is not None else None
+    leaf = leaf or (entries[-1] if entries else None)
+    path: list[SessionEntry] = []
+    seen: set[str] = set()
+    while leaf is not None and leaf.id not in seen:
+        seen.add(leaf.id)
+        path.append(leaf)
+        leaf = by_id.get(leaf.parent_id) if leaf.parent_id else None
+    path.reverse()
+    return path
 
 
-def _format_compaction_summary(summary: str) -> str:
-    return f"Previous conversation summary:\n{summary}"
-
-
-def _format_branch_summary(entry: BranchSummaryEntry) -> str:
-    return (
-        "The following is a summary of a branch that this conversation came back from:\n"
-        f"<summary>\n{entry.summary}\n</summary>"
+def _build_context_entries(path: list[SessionEntry]) -> list[SessionEntry]:
+    compaction = next(
+        (entry for entry in reversed(path) if isinstance(entry, CompactionEntry)),
+        None,
     )
+    if compaction is None:
+        return path
+    compaction_index = path.index(compaction)
+    context_entries: list[SessionEntry] = [compaction]
+    if compaction.first_kept_entry_id is not None:
+        keep = False
+        for entry in path[:compaction_index]:
+            keep = keep or entry.id == compaction.first_kept_entry_id
+            if keep:
+                context_entries.append(entry)
+    else:
+        replaced = set(compaction.replaces_entry_ids)
+        context_entries.extend(
+            entry for entry in path[:compaction_index] if entry.id not in replaced
+        )
+    context_entries.extend(path[compaction_index + 1 :])
+    return context_entries

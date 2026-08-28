@@ -81,7 +81,7 @@ async def summarize_branch_messages_with_model(
         system=BRANCH_SUMMARY_SYSTEM_PROMPT,
         messages=[
             UserMessage(
-                content=_branch_summary_prompt(
+                    content=build_branch_summary_prompt(
                     messages,
                     custom_instructions=custom_instructions,
                     replace_instructions=replace_instructions,
@@ -100,10 +100,10 @@ async def summarize_branch_messages_with_model(
     summary = response.text.strip()
     if not summary:
         return None
-    return _add_branch_summary_context(summary, messages)
+    return add_branch_summary_context(summary, messages)
 
 
-def _branch_summary_prompt(
+def build_branch_summary_prompt(
     messages: Sequence[AgentMessage],
     *,
     custom_instructions: str | None = None,
@@ -184,8 +184,8 @@ def _trim_summary_source_text(
     return f"{normalized[:max_chars].rstrip()}\n\n[... {truncated_chars} more characters truncated]"
 
 
-def _add_branch_summary_context(summary: str, messages: Sequence[AgentMessage]) -> str:
-    read_files, modified_files = _branch_file_operations(messages)
+def add_branch_summary_context(summary: str, messages: Sequence[AgentMessage]) -> str:
+    read_files, modified_files = file_operations_from_messages(messages)
     sections = [BRANCH_SUMMARY_PREAMBLE + summary]
     if read_files:
         read_file_text = "\n".join(read_files)
@@ -196,7 +196,10 @@ def _add_branch_summary_context(summary: str, messages: Sequence[AgentMessage]) 
     return "\n\n".join(sections)
 
 
-def _branch_file_operations(messages: Sequence[AgentMessage]) -> tuple[list[str], list[str]]:
+def file_operations_from_messages(
+    messages: Sequence[AgentMessage],
+) -> tuple[list[str], list[str]]:
+    """Return Pi-compatible read-only and modified file lists."""
     read: set[str] = set()
     modified: set[str] = set()
     for message in messages:
@@ -212,3 +215,18 @@ def _branch_file_operations(messages: Sequence[AgentMessage]) -> tuple[list[str]
                 modified.add(path)
     read_only = sorted(path for path in read if path not in modified)
     return read_only, sorted(modified)
+
+
+def append_file_operations(
+    summary: str,
+    *,
+    read_files: Sequence[str],
+    modified_files: Sequence[str],
+) -> str:
+    """Append Pi's deterministic file-operation sections to a summary."""
+    sections = [summary]
+    if read_files:
+        sections.append(f"<read-files>\n{'\n'.join(read_files)}\n</read-files>")
+    if modified_files:
+        sections.append(f"<modified-files>\n{'\n'.join(modified_files)}\n</modified-files>")
+    return "\n\n".join(sections)

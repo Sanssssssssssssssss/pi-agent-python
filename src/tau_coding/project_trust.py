@@ -154,9 +154,7 @@ def canonicalize_project_path(path: Path, *, base: Path | None = None) -> Canoni
     if not resolved.is_dir():
         raise ProjectTrustError(f"Project cwd is not a directory: {resolved}")
     try:
-        if sys.platform == "win32":
-            resolved = Path(os.path.normcase(str(resolved)))
-        elif sys.platform == "darwin":
+        if sys.platform == "darwin":
             # normcase() is a no-op on Darwin. F_GETPATH asks the mounted
             # filesystem for its case-preserving spelling, so aliases on a
             # case-insensitive volume share a key without collapsing distinct
@@ -185,8 +183,15 @@ class ProtectedResourceDetector:
                 found,
                 "skills",
                 root / namespace / "skills",
-                "*/SKILL.md",
+                "**/SKILL.md",
                 predicate=is_skill_candidate,
+            )
+            self._glob(
+                found,
+                "skills",
+                root / namespace / "skills",
+                "*.md",
+                predicate=lambda path: path.name != "SKILL.md" and is_skill_candidate(path),
             )
             self._glob(
                 found,
@@ -379,7 +384,7 @@ class ProjectTrustStore:
             candidate = Path(raw_path)
             if not candidate.is_absolute() or Path(os.path.normpath(raw_path)) != candidate:
                 raise ProjectTrustError(f"Noncanonical path in project trust store {self.path}")
-            normalized = Path(os.path.normcase(raw_path)) if sys.platform == "win32" else candidate
+            normalized = candidate
             if sys.platform == "darwin" and candidate.exists():
                 try:
                     normalized = _darwin_filesystem_path(candidate)

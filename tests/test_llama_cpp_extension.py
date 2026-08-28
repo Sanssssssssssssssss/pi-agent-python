@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import stat
+import sys
 from collections.abc import Callable, Mapping
 from pathlib import Path
 
@@ -505,9 +506,10 @@ def test_state_is_atomic_locked_private_and_recovers_interrupted_writes(tmp_path
     paths = TauPaths(home=tmp_path / "tau", agents_home=tmp_path / "agents")
     store = LlamaCppStateStore(paths=paths)
     store.save(_state())
-    assert stat.S_IMODE(store.path.stat().st_mode) == 0o600
-    assert stat.S_IMODE(store.lock_path.stat().st_mode) == 0o600
-    assert stat.S_IMODE(store.path.parent.stat().st_mode) == 0o700
+    if sys.platform != "win32":
+        assert stat.S_IMODE(store.path.stat().st_mode) == 0o600
+        assert stat.S_IMODE(store.lock_path.stat().st_mode) == 0o600
+        assert stat.S_IMODE(store.path.parent.stat().st_mode) == 0o700
 
     temporary = store.path.parent / f".{store.path.name}.interrupted.tmp"
     temporary.write_text("partial", encoding="utf-8")

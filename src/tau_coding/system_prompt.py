@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from datetime import date
 from pathlib import Path
 from xml.sax.saxutils import escape
 
@@ -39,26 +38,23 @@ class BuildSystemPromptOptions:
     custom_prompt: str | None = None
     append_system_prompt: str | None = None
     context_files: Sequence[ProjectContextFile] = ()
-    current_date: date | None = None
     extra_guidelines: Sequence[str] = field(default_factory=tuple)
     extra_sections: Sequence[PromptSection] = field(default_factory=tuple)
 
 
 def build_system_prompt(options: BuildSystemPromptOptions) -> str:
     """Build a deterministic Pi-style system prompt for Tau."""
-    current_date = options.current_date or date.today()
     cwd = _format_path(options.cwd)
     append_parts = [options.append_system_prompt] if options.append_system_prompt else []
     append_parts.extend(format_prompt_section(section) for section in options.extra_sections)
     append_section = "".join(f"\n\n{part}" for part in append_parts)
 
-    if options.custom_prompt is not None:
+    if options.custom_prompt:
         prompt = options.custom_prompt
         prompt += append_section
         prompt += format_project_context(options.context_files)
         if _has_tool(options.tools, "read"):
             prompt += format_skills_for_prompt(options.skills)
-        prompt += f"\nCurrent date: {current_date.isoformat()}"
         prompt += f"\nCurrent working directory: {cwd}"
         return prompt
 
@@ -76,7 +72,6 @@ def build_system_prompt(options: BuildSystemPromptOptions) -> str:
     prompt += format_project_context(options.context_files)
     if _has_tool(options.tools, "read"):
         prompt += format_skills_for_prompt(options.skills)
-    prompt += f"\nCurrent date: {current_date.isoformat()}"
     prompt += f"\nCurrent working directory: {cwd}"
     return prompt
 
@@ -134,13 +129,8 @@ def collect_prompt_guidelines(
         guidelines.append(normalized)
 
     has_bash = "bash" in names
-    has_exploration_tools = bool({"grep", "find", "ls"} & names)
-    if has_bash and not has_exploration_tools:
+    if has_bash and not ({"grep", "find", "ls"} & names):
         add("Use bash for file operations like ls, rg, find")
-    elif has_bash and has_exploration_tools:
-        add(
-            "Prefer grep/find/ls tools over bash for file exploration (faster, respects .gitignore)"
-        )
 
     for tool in tools:
         for guideline in tool.prompt_guidelines:
@@ -148,13 +138,6 @@ def collect_prompt_guidelines(
     for guideline in extra_guidelines:
         add(guideline)
 
-    add("Inspect relevant files and project instructions before editing")
-    add("Make focused changes that preserve the project's architecture and style")
-    add("Do not overwrite or discard unrelated user changes")
-    add("Use the project's documented commands and package manager")
-    add("Run relevant tests, formatting, linting, and type checks after changes")
-    add("Report checks honestly; never claim a command passed unless you ran it")
-    add("Ask before destructive operations or materially ambiguous design choices")
     add("Be concise in your responses")
     add("Show file paths clearly when working with files")
     return guidelines
@@ -179,7 +162,7 @@ def format_project_context(context_files: Sequence[ProjectContextFile]) -> str:
         "",
     ]
     for context_file in context_files:
-        lines.append(f'<project_instructions path="{escape(context_file.path)}">')
+        lines.append(f'<project_instructions path="{_escape_xml(context_file.path)}">')
         lines.append(context_file.content)
         lines.append("</project_instructions>")
         lines.append("")
@@ -199,20 +182,20 @@ def format_skills_for_prompt(skills: Sequence[Skill]) -> str:
 
     lines = [
         "\n\nThe following skills provide specialized instructions for specific tasks.",
-        "Read the full skill file when the task matches its description.",
+        "Use the read tool to load a skill's file when the task matches its description.",
         "When a skill file references a relative path, resolve it against the skill directory "
         "(parent of SKILL.md / dirname of the path) and use that absolute path in tool commands.",
         "",
         "<available_skills>",
     ]
-    for skill in sorted(visible_skills, key=lambda item: item.name):
-        description = skill.description or "No description"
+    for skill in visible_skills:
+        description = skill.description or ""
         lines.extend(
             [
                 "  <skill>",
-                f"    <name>{escape(skill.name)}</name>",
-                f"    <description>{escape(description)}</description>",
-                f"    <location>{escape(str(skill.path))}</location>",
+                f"    <name>{_escape_xml(skill.name)}</name>",
+                f"    <description>{_escape_xml(description)}</description>",
+                f"    <location>{_escape_xml(str(skill.path))}</location>",
                 "  </skill>",
             ]
         )
@@ -226,3 +209,7 @@ def _has_tool(tools: Sequence[AgentTool], name: str) -> bool:
 
 def _format_path(path: Path) -> str:
     return str(path).replace("\\", "/")
+
+
+def _escape_xml(value: str) -> str:
+    return escape(value, {'"': "&quot;", "'": "&apos;"})

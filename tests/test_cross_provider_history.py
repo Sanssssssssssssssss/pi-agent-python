@@ -72,16 +72,17 @@ def test_anthropic_compiles_codex_tool_history_with_portable_ids() -> None:
     assert isinstance(payload_messages, list)
     assistant_content = payload_messages[1]["content"]
     assert isinstance(assistant_content, list)
-    assert [block["type"] for block in assistant_content] == ["tool_use", "tool_use"]
+    assert [block["type"] for block in assistant_content] == ["text", "tool_use", "tool_use"]
+    assert assistant_content[0]["text"] == "private reasoning"
 
-    tool_use_ids = [block["id"] for block in assistant_content]
+    tool_use_ids = [block["id"] for block in assistant_content if block["type"] == "tool_use"]
     result_ids = [payload_messages[index]["content"][0]["tool_use_id"] for index in (2, 3)]
     assert tool_use_ids == result_ids
     assert len(set(tool_use_ids)) == 2
     assert all(re.fullmatch(r"[A-Za-z0-9_-]+", value) for value in tool_use_ids)
 
 
-def test_anthropic_omits_foreign_thinking_only_assistant_turn() -> None:
+def test_anthropic_replays_foreign_thinking_as_plain_text() -> None:
     messages = [
         UserMessage(content="Think about this"),
         AssistantMessage(
@@ -109,6 +110,7 @@ def test_anthropic_omits_foreign_thinking_only_assistant_turn() -> None:
 
     assert payload["messages"] == [
         {"role": "user", "content": "Think about this"},
+        {"role": "assistant", "content": [{"type": "text", "text": "private reasoning"}]},
         {"role": "user", "content": "Continue with Claude"},
     ]
 

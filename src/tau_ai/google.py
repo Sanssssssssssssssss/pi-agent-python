@@ -33,15 +33,21 @@ from tau_ai.content import (
     NON_VISION_TOOL_IMAGE_PLACEHOLDER,
     NON_VISION_USER_IMAGE_PLACEHOLDER,
     text_and_images,
+    transform_messages,
 )
 from tau_ai.env import OpenAICompatibleConfig
 from tau_ai.events import AssistantMessageEvent
 from tau_ai.http import create_async_client
 from tau_ai.http_errors import provider_http_error_message
-from tau_ai.provider import CancellationToken
+from tau_ai.provider import (
+    CancellationToken,
+    apply_provider_headers,
+    apply_provider_payload,
+    emit_provider_response,
+)
 from tau_ai.retry import provider_retry_event, retry_delay_seconds, wait_for_retry
 from tau_ai.stream import canonicalize_provider_stream
-from tau_ai.tool_call_ids import portable_tool_call_id
+from tau_ai.tool_call_ids import normalize_portable_tool_call_id, portable_tool_call_id
 
 
 class GoogleGenerativeAIProvider:
@@ -104,6 +110,9 @@ class GoogleGenerativeAIProvider:
                 max_tokens=self._config.max_tokens,
                 supports_images=self._config.supports_images,
             )
+            request_payload = await apply_provider_payload(
+                self._config.provider_hooks, payload
+            )
             url = (
                 f"{self._config.base_url.rstrip('/')}/models/"
                 f"{model}:streamGenerateContent?alt=sse&key={self._config.api_key}"
@@ -112,6 +121,7 @@ class GoogleGenerativeAIProvider:
                 **dict(self._config.headers or {}),
                 "content-type": "application/json",
             }
+            headers = await apply_provider_headers(self._config.provider_hooks, headers)
 
             attempt = 0
             parser = _GoogleStreamParser()
@@ -119,8 +129,13 @@ class GoogleGenerativeAIProvider:
                 parser = _GoogleStreamParser()
                 try:
                     async with client.stream(
-                        "POST", url, json=payload, headers=headers
+                        "POST", url, json=request_payload, headers=headers
                     ) as response:
+                        await emit_provider_response(
+                            self._config.provider_hooks,
+                            response.status_code,
+                            response.headers,
+                        )
                         if response.status_code >= 400:
                             body = await response.aread()
                             body_text = body.decode(errors="replace")
@@ -306,6 +321,14 @@ def _build_google_payload(
     max_tokens: int | None,
     supports_images: bool = False,
 ) -> dict[str, JSONValue]:
+    messages = transform_messages(
+        messages,
+        model=model,
+        provider="google",
+        api="google-generative-ai",
+        supports_images=supports_images,
+        normalize_tool_call_id=normalize_portable_tool_call_id,
+    )
     config: dict[str, JSONValue] = {}
     payload: dict[str, JSONValue] = {
         "contents": [

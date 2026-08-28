@@ -182,6 +182,7 @@ class ToolResultMessage(WireModel):
     tool_name: str
     content: list[ToolResultContent] = Field(default_factory=list)
     details: JSONValue = None
+    usage: Usage | None = None
     added_tool_names: list[str] | None = None
     is_error: bool = False
     timestamp: int = Field(default_factory=current_timestamp_ms)
@@ -237,7 +238,7 @@ class BranchSummaryMessage(WireModel):
 class CompactionSummaryMessage(WireModel):
     role: Literal["compactionSummary"] = "compactionSummary"
     summary: str
-    tokens_before: int
+    tokens_before: int | None
     timestamp: int = Field(default_factory=current_timestamp_ms)
 
 
@@ -272,7 +273,54 @@ def content_text(content: str | list[Any]) -> str:
 
 def message_to_user(message: AgentMessage) -> UserMessage:
     """Convert custom/session-only messages to provider-compatible user context."""
-    return UserMessage(content=message_text(message), timestamp=message.timestamp)
+    if isinstance(message, CustomMessage):
+        content = message.content
+    elif isinstance(message, BranchSummaryMessage):
+        content = (
+            "The following is a summary of a branch that this conversation came back from:\n\n"
+            f"<summary>\n{message.summary}\n</summary>"
+        )
+    elif isinstance(message, CompactionSummaryMessage):
+        content = (
+            "The conversation history before this point was compacted into the following "
+            f"summary:\n\n<summary>\n{message.summary}\n</summary>"
+        )
+    elif isinstance(message, BashExecutionMessage):
+        content = bash_execution_to_text(message)
+    else:
+        content = message_text(message)
+    return UserMessage(content=content, timestamp=message.timestamp)
+
+
+def convert_to_llm(
+    messages: list[AgentMessage], _signal: object | None = None
+) -> list[AgentMessage]:
+    """Translate Pi coding-session messages to provider-compatible messages."""
+    converted: list[AgentMessage] = []
+    for message in messages:
+        if isinstance(message, BashExecutionMessage) and message.exclude_from_context:
+            continue
+        if isinstance(
+            message,
+            (BashExecutionMessage, CustomMessage, BranchSummaryMessage, CompactionSummaryMessage),
+        ):
+            converted.append(message_to_user(message))
+        else:
+            converted.append(message)
+    return converted
+
+
+def bash_execution_to_text(message: BashExecutionMessage) -> str:
+    """Translate Pi's shell transcript message into model-visible text."""
+    text = f"Ran `{message.command}`\n"
+    text += f"```\n{message.output}\n```" if message.output else "(no output)"
+    if message.cancelled:
+        text += "\n\n(command cancelled)"
+    elif message.exit_code not in {None, 0}:
+        text += f"\n\nCommand exited with code {message.exit_code}"
+    if message.truncated and message.full_output_path:
+        text += f"\n\n[Output truncated. Full output: {message.full_output_path}]"
+    return text
 
 
 def message_text(message: AgentMessage) -> str:

@@ -3,7 +3,7 @@
 Mirrors Pi's practice of testing example extensions from the main suite
 (plan-mode-extension.test.ts and friends), with one difference: instead of
 mocking the extension API, these load the real files through the real
-`ExtensionRuntime` and drive the composed tools — which doubles as a template
+`ExtensionRuntime` and drive its lifecycle seams — which doubles as a template
 for how extension authors can test their own extensions.
 """
 
@@ -11,7 +11,8 @@ from pathlib import Path
 
 import pytest
 
-from tau_agent.messages import TextContent
+from tau_agent.loop import AgentContext, BeforeToolCallContext
+from tau_agent.messages import AssistantMessage, TextContent, ToolCall
 from tau_agent.tools import AgentTool, AgentToolResult
 from tau_coding import TauResourcePaths
 from tau_coding.extensions import ExtensionRuntime
@@ -57,6 +58,15 @@ def _fake_tool(name: str) -> tuple[AgentTool, list[dict[str, object]]]:
         execute_fn=executor,
     )
     return tool, executed
+
+
+def _before(tool: AgentTool, arguments: dict[str, object]) -> BeforeToolCallContext:
+    return BeforeToolCallContext(
+        AssistantMessage(),
+        ToolCall(id="test-call", name=tool.name, arguments=arguments),
+        arguments,
+        AgentContext(system="", messages=[], tools=[tool]),
+    )
 
 
 # -- hello_tool.py -------------------------------------------------------------
@@ -117,12 +127,12 @@ async def test_hello_tool_defaults_to_world(tmp_path: Path) -> None:
 async def test_permission_gate_blocks_dangerous_bash(tmp_path: Path, command: str) -> None:
     runtime = _runtime_with_examples(tmp_path, "permission_gate.py")
     bash, executed = _fake_tool("bash")
-    wrapped = runtime.compose_tools([bash])[0]
+    context = _before(bash, {"command": command})
 
-    result = await wrapped.execute("test-call", {"command": command})
+    result = await runtime.before_tool_call(context)
 
-    assert "blocked" in result.text.lower()
-    assert "guarded pattern" in result.text
+    assert result is not None and result.block
+    assert result.reason is not None and "guarded pattern" in result.reason
     assert executed == []
 
 
@@ -138,10 +148,12 @@ async def test_permission_gate_blocks_dangerous_bash(tmp_path: Path, command: st
 async def test_permission_gate_allows_safe_bash(tmp_path: Path, command: str) -> None:
     runtime = _runtime_with_examples(tmp_path, "permission_gate.py")
     bash, executed = _fake_tool("bash")
-    wrapped = runtime.compose_tools([bash])[0]
+    context = _before(bash, {"command": command})
 
-    result = await wrapped.execute("test-call", {"command": command})
+    outcome = await runtime.before_tool_call(context)
+    result = await bash.execute("test-call", context.args)
 
+    assert outcome is None
     assert result.text == "ran"
     assert executed == [{"command": command}]
 
@@ -149,9 +161,11 @@ async def test_permission_gate_allows_safe_bash(tmp_path: Path, command: str) ->
 async def test_permission_gate_ignores_other_tools(tmp_path: Path) -> None:
     runtime = _runtime_with_examples(tmp_path, "permission_gate.py")
     write, executed = _fake_tool("write")
-    wrapped = runtime.compose_tools([write])[0]
+    context = _before(write, {"content": "rm -rf / would be bad"})
 
-    result = await wrapped.execute("test-call", {"content": "rm -rf / would be bad"})
+    outcome = await runtime.before_tool_call(context)
+    result = await write.execute("test-call", context.args)
 
+    assert outcome is None
     assert result.text == "ran"
     assert len(executed) == 1

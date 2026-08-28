@@ -169,7 +169,7 @@ def create_coding_tools(
 ) -> list[AgentTool]:
     """Create the default coding-tool set for a local project.
 
-    The returned tools are ordered as `read`, `write`, `edit`, and `bash`.
+    The returned tools are ordered as Pi's `read`, `bash`, `edit`, and `write`.
     Relative paths used with those tools are resolved against `cwd`; when `cwd`
     is omitted, the process current working directory at factory-call time is
     used. The tools share per-path write/edit locks within this process so
@@ -179,9 +179,9 @@ def create_coding_tools(
     root = Path.cwd() if cwd is None else Path(cwd)
     return [
         create_read_tool(cwd=root, image_support=image_support),
-        create_write_tool(cwd=root),
-        create_edit_tool(cwd=root),
         create_bash_tool(cwd=root, shell_command_prefix=shell_command_prefix),
+        create_edit_tool(cwd=root),
+        create_write_tool(cwd=root),
     ]
 
 
