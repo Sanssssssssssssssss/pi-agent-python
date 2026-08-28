@@ -225,7 +225,7 @@ def _engine_id(engine: str | None) -> str:
 
 @pytest.mark.parametrize("powershell", _powershell_engines(), ids=_engine_id)
 def test_windows_handoff_blocks_for_live_parent_and_preserves_arguments(
-    tmp_path: Path, powershell: str | None, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, powershell: str | None
 ) -> None:
     if powershell is None:
         pytest.skip("requires Windows and PowerShell")
@@ -247,18 +247,10 @@ def test_windows_handoff_blocks_for_live_parent_and_preserves_arguments(
         "-named-looking",
     )
     update_dir = tmp_path / "handoff with spaces"
-    executable_dir = tmp_path / "executable path with spaces"
-    executable_dir.mkdir()
-    fake_python = executable_dir / Path(sys.executable).name
-    shutil.copy2(sys.executable, fake_python)
-    for runtime_dll in Path(sys.base_prefix).glob("python*.dll"):
-        shutil.copy2(runtime_dll, executable_dir / runtime_dll.name)
-
-    monkeypatch.setenv("PYTHONHOME", sys.base_prefix)
 
     try:
         result = updater._handoff_windows_update(
-            (str(fake_python), str(fake_update), str(marker), *arguments),
+            (sys.executable, str(fake_update), str(marker), *arguments),
             launcher=subprocess.Popen,
             executable_finder=lambda name: powershell,
             parent_pid=parent.pid,
